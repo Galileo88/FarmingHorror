@@ -356,9 +356,10 @@ TA.Game = class {
       .sort((a, b) => Math.abs(a.x - fx) - Math.abs(b.x - fx))[0];
     if (obj) {
       if (obj.kind === 'tree') return { label: 'Chop', icon: 'axe', run: () => this.chop(obj) };
-      if (obj.kind === 'rock') return { label: obj.crystal ? 'Mine crystal' : 'Mine', icon: 'pick', run: () => this.mine(obj) };
+      if (obj.kind === 'rock') return { label: 'Mine', icon: 'pick', run: () => this.mine(obj) };
       if (obj.kind === 'bush') return { label: 'Forage', icon: 'berry', run: () => this.forage(obj) };
-      if (obj.kind === 'mushroom' || obj.kind === 'glow') return { label: 'Pick mushroom', icon: 'mushroom', run: () => this.forage(obj) };
+      if (obj.kind === 'mushroom') return { label: 'Pick mushroom', icon: 'mushroom', run: () => this.forage(obj) };
+      if (obj.kind === 'glow') return { label: 'Gather glowbloom', icon: 'berry', run: () => this.forage(obj) };
       if (obj.kind === 'wildcrop') return { label: 'Gather wild moonflower', icon: 'moonflower', run: () => this.forage(obj) };
     }
     // till new field on your land
@@ -403,10 +404,10 @@ TA.Game = class {
     const p = this.player, oy = o.y || 0;
     p.act('miner', 'mine', 3, () => {
       o.hp -= 1 + this.tools.pick;
-      this.fx.burst(o.x, oy + 4, o.crystal ? '#a884f3' : '#9babb2', 5);
+      this.fx.burst(o.x, oy + 4, '#9babb2', 5);
       if (o.hp <= 0) {
-        this.dropItem(o.x, 'stone', (o.crystal ? 1 : 2) + Math.floor(Math.random() * (o.rich ? 4 : 3)), oy);
-        if (o.gems && Math.random() < (o.crystal ? 0.8 : o.rich ? 0.45 : 0.15)) this.dropItem(o.x, 'gem', 1, oy);
+        this.dropItem(o.x, 'stone', 2 + Math.floor(Math.random() * (o.rich ? 4 : 3)), oy);
+        if (o.gems && Math.random() < (o.rich ? 0.45 : 0.15)) this.dropItem(o.x, 'gem', 1, oy);
         this.world.remove(o, this.day);
         this.fx.burst(o.x, oy + 4, '#7f708a', 12, 60);
       }
@@ -416,7 +417,7 @@ TA.Game = class {
     const p = this.player, oy = o.y || 0;
     p.act('farmer', 'sow', 3, () => {
       if (o.kind === 'mushroom') this.dropItem(o.x, 'mushroom', 1, oy);
-      else if (o.kind === 'glow') { this.dropItem(o.x, 'mushroom', 1, oy); if (Math.random() < 0.25) this.dropItem(o.x, 'potion', 1, oy); }
+      else if (o.kind === 'glow') { this.dropItem(o.x, 'berry', 1, oy); if (Math.random() < 0.25) this.dropItem(o.x, 'potion', 1, oy); }
       else if (o.kind === 'wildcrop') { this.dropItem(o.x, 'seed_moonflower', 1); if (Math.random() < 0.4) this.dropItem(o.x, 'moonflower', 1); }
       else {
         const r = Math.random();

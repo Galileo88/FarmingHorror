@@ -19,6 +19,9 @@ TT2 = "02 TINY THRONES - Goblin Camp.zip"
 TT3 = "03 - Tiny Thrones - Parallax Pack.zip"
 TT4 = "04 TINY THRONES - Elvish City.zip"
 VIL = "tiny-clans-villagers-workers-all.zip"
+CAVE = "Cave Tileset.rar"
+# from the cave tileset archive (its slime sprites are not used)
+CAVE_FILES = {"cave/tileset.png": "Tileset/tileset.png", "cave/vegetation.png": "Tileset/vegetation.png"}
 
 FILES = {
     # tilesets
@@ -147,6 +150,21 @@ def recolor_folk():
         im.save(os.path.join(OUT, f"units/{name}.png"))
 
 
+def copy_rar(rarname, files):
+    """zipfile can't read RAR, so use bsdtar (libarchive-tools) when it's there."""
+    import subprocess, shutil as sh, tempfile
+    rp = os.path.join(ZIPS, rarname)
+    if not os.path.exists(rp) or not sh.which("bsdtar"):
+        print("  skipped", rarname, "(missing archive or bsdtar)"); return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["bsdtar", "-xf", rp, "-C", tmp, *files.values()], check=True)
+        for dest, inner in files.items():
+            path = os.path.join(OUT, dest)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            sh.copyfile(os.path.join(tmp, inner), path)
+    return len(files)
+
+
 def main():
     n = 0
     for dest, (zipname, inner) in FILES.items():
@@ -154,6 +172,7 @@ def main():
     for name, (folder, layers) in PARALLAX.items():
         for i, layer in enumerate(layers):
             n += copy(TT3, f"Parallax PNG/{folder}/{layer}", f"parallax/{name}_{i}.png")
+    n += copy_rar(CAVE, CAVE_FILES)
     print(f"copied {n} files into assets/")
     recolor_folk()
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

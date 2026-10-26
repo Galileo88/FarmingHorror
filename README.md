@@ -34,7 +34,7 @@ Double-clicking `index.html` also works in most browsers. The game saves to the 
 - **World:** an endless strip split into 2400px biome regions. The biomes are Greenmeadow, Amberwood, Fallen Kingdom, Elderglade and Goblin Barrens, and danger rises with distance from the start. Each region lays out 1 to 3 points of interest at their real size: villages (fields, a market, a woodlot), towns and cities (gates at both ends, a hazy back row of buildings, smithies, plazas), ruins, goblin camps, war camps, bone fields, elder groves, dwarf dig sites and stray dogs. Everything comes from the world seed. The save only stores what you changed (felled trees regrow after a few days).
 - **Biome borders:** two biomes mix over a 600px band. Ground tiles cross-fade, trees and grass dither between the two palettes, the skies blend, and a screen of foreground trees stands right on the seam.
 - **Townsfolk:** villages have 3 to 5 people, towns 6 to 9 plus guards, cities 12 to 16 plus guards. They stroll, stop to chat with each other, head indoors at night, and some work all day (smiths, farmers, woodcutters, miners). Stand next to one and press E to talk.
-- **Caves:** the caves lie right under the ground, in the same space, and run beneath the whole world. A cave mouth is a shaft with a trapdoor. Stand on it and press ↓ to drop through, and the camera follows you down past the soil and rock into the caverns. Down there are a stepped floor, ledges you can jump onto or drop through, ore, crystals, glowing mushrooms, chests on high ledges, and creatures that hop after you. To get out, jump up the ledges in a shaft towards the daylight and hop out of the hole. Each region above has its own cave biome: Echo Caverns, Crystal Depths, Fungal Grotto or Bone Pits.
+- **Caves:** the caves lie right under the ground, in the same space, and run beneath the whole world. A cave mouth is a shaft with a trapdoor. Stand on it and press ↓ to drop through, and the camera follows you down past the soil and rock into the caverns. Down there are a stepped floor, ledges you can jump onto or drop through, hanging roots, ore, glowing blooms, mushrooms, chests on high ledges, and creatures that hop after you. The rock is autotiled from the cave tileset's nine-slice, so every exposed face gets its rim. To get out, jump up the ledges in a shaft towards the daylight and hop out of the hole. Each region above has its own cave biome: Echo Caverns, Crystal Depths, Fungal Grotto or Bone Pits.
 - **Hidden biomes:** now and then a region is walled in by cliffs. The Lost Vale (lush, safe, a hermit trader) and the Ember Crater (rich rock, dangerous) can only be reached by going under the cliffs through the caves and climbing out inside.
 - **Portals:** a rare region holds one end of a portal pair. The portal hides in ruins, in a cave or out in the open, and its twin lies 3 to 7 regions away, sometimes inside a hidden biome.
 - **Depth:** some grass, rocks, trees, fences and small buildings stand in front of the path. They turn see-through when they would hide you. Archways (your walls, town gates, ruin gates) put their left half behind you and their right half in front, so you walk through them.
@@ -54,8 +54,8 @@ Double-clicking `index.html` also works in most browsers. The game saves to the 
 | `src/entities.js` | Shared jump/fall physics, player, creatures (and their corpses), traders, townsfolk, travellers, dogs, guards, arrows, particles |
 | `src/render.js` | Camera, parallax (each set composited on its own, then blended), ground, back/street/front layers, archways, cliffs, caves, lighting, weather and colour grading |
 | `src/ui.js` | DOM HUD, prompts, menus, strip map, touch controls |
-| `tools/build_assets.py` | Copies the sheets the game uses out of `zips/` into `assets/` with clean names |
-| `tools/make_art.py` | Original crop, soil, icon, campfire, chest and cave pixel art (the packs don't include these) |
+| `tools/build_assets.py` | Copies the sheets the game uses out of `zips/` into `assets/` with clean names (the cave tileset is a RAR, so that step needs `bsdtar` from libarchive-tools) |
+| `tools/make_art.py` | Original crop, soil, icon, campfire and chest pixel art (the packs don't include these), and a recolour of the cave tileset for each cave biome |
 
 The canvas is screen-sized. The world draws in world pixels through a whole-number zoom (about 92 world pixels tall), and positions snap to screen pixels rather than whole world pixels, so moving sprites glide instead of jumping one fat pixel at a time.
 
@@ -67,5 +67,6 @@ Debug helpers in the browser console: `TA.dbg.give('wood', 50)`, `TA.dbg.time(21
 - Tiny Clans units and villagers by Zneeke
 - TinyBit Dogs by Netherzapdos
 - Tiny RPG icons by Pixeltiers
+- Cave tileset and vegetation from `zips/Cave Tileset.rar` (supplied with the project; its slime sprites are not used)
 
 These are paid packs. They allow use in games but not redistribution of the raw files. If this repository is public, consider keeping `zips/` (and `assets/`) out of it.

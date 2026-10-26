@@ -45,8 +45,8 @@ TA.IMAGES = {
   mushroom: 'assets/icons/mushroom.png',
   meat: 'assets/icons/meat.png',
   potion: 'assets/icons/potion.png',
-  cave: 'assets/art/cave.png',
-  caveBg: 'assets/art/cave_bg.png',
+  caveTiles: 'assets/art/cave_tiles.png',
+  caveVeg: 'assets/cave/vegetation.png',
 };
 ['hut', 'market', 'armory', 'defense', 'lighttower', 'watchtower', 'barracks', 'manor', 'spire',
   'wall', 'wall2', 'ruin1', 'ruin2', 'ruingate', 'ruintower', 'elf1', 'elf2', 'elf4', 'elf6', 'elf7']
@@ -114,10 +114,13 @@ TA.SPR = {
   e_arcade: ['elvishTiles', 64, 29, 64, 51], e_crystaltower: ['elvishTiles', 165, 22, 20, 74], e_pillar: ['elvishTiles', 138, 33, 12, 63],
   e_house: ['elvishTiles', 6, 73, 20, 23], e_crystalhouse: ['elvishTiles', 37, 82, 21, 30], e_portal: ['elvishTiles', 5, 98, 21, 14],
   e_hedge: ['elvishTiles', 64, 89, 64, 7], e_arches: ['elvishTiles', 64, 103, 48, 9],
-  // caves (generated art)
-  crystal_t: ['cave', 48, 0, 10, 10], crystal_p: ['cave', 58, 0, 10, 10], glowshroom: ['cave', 68, 4, 6, 6],
-  stalag_0: ['cave', 48, 12, 7, 12], stalag_1: ['cave', 56, 12, 7, 12], stalag_2: ['cave', 64, 12, 7, 12], stalag_3: ['cave', 72, 12, 7, 12],
-  cave_mouth: ['cave', 0, 48, 40, 24],
+  // cave vegetation: roots hanging from the roof, tufts, glowing blooms
+  root_a: ['caveVeg', 0, 0, 15, 19], root_b: ['caveVeg', 21, 0, 21, 21], root_c: ['caveVeg', 48, 0, 16, 22],
+  root_d: ['caveVeg', 96, 0, 14, 21], root_e: ['caveVeg', 68, 16, 6, 11], root_f: ['caveVeg', 67, 0, 26, 5],
+  tuft_a: ['caveVeg', 1, 42, 14, 6], tuft_b: ['caveVeg', 18, 39, 12, 9], tuft_c: ['caveVeg', 1, 59, 14, 5], tuft_d: ['caveVeg', 18, 55, 12, 9],
+  bloom_a: ['caveVeg', 34, 35, 14, 13], bloom_b: ['caveVeg', 51, 37, 11, 11], bloom_c: ['caveVeg', 101, 37, 11, 11], bloom_d: ['caveVeg', 112, 37, 11, 11],
+  bloom_e: ['caveVeg', 48, 49, 15, 15], bloom_f: ['caveVeg', 113, 49, 15, 15], bloom_g: ['caveVeg', 83, 50, 27, 14],
+  vmush: ['caveVeg', 37, 58, 6, 6],
 };
 
 TA.TREE_SETS = {
@@ -272,12 +275,14 @@ TA.BIOMES = {
   },
 };
 
-// Underground biomes. pal = row in assets/art/cave.png
+// Underground biomes. pal = which recolour of the cave tileset (rows of
+// assets/art/cave_tiles.png); bg = the colour of open cave air.
+// rocks / blooms / shrooms = how much of each is on the floor, rich = share of gem-rich ore
 TA.CAVE_BIOMES = {
-  caverns: { name: 'Echo Caverns', pal: 0, color: '#9babb2', bg: '#1d1720', rocks: 0.5, crystals: 0.1, shrooms: 0.1, mobs: ['skeleton', 'ratfolk'] },
-  crystal: { name: 'Crystal Depths', pal: 1, color: '#a884f3', bg: '#1f1426', rocks: 0.3, crystals: 0.7, shrooms: 0.05, mobs: ['skeleton', 'kobold'] },
-  fungal: { name: 'Fungal Grotto', pal: 2, color: '#1ebc73', bg: '#141c1d', rocks: 0.3, crystals: 0.05, shrooms: 0.7, mobs: ['zombie', 'ratfolk'] },
-  bones: { name: 'Bone Pits', pal: 3, color: '#c8ac99', bg: '#211518', rocks: 0.4, crystals: 0.1, shrooms: 0.1, mobs: ['skeleton', 'zombie', 'bandit'] },
+  caverns: { name: 'Echo Caverns', pal: 0, color: '#9babb2', bg: '#17172a', rocks: 0.5, rich: 0.1, blooms: 0.15, shrooms: 0.1, mobs: ['skeleton', 'ratfolk'] },
+  crystal: { name: 'Crystal Depths', pal: 1, color: '#a884f3', bg: '#1b1229', rocks: 0.55, rich: 0.6, blooms: 0.2, shrooms: 0.05, mobs: ['skeleton', 'kobold'] },
+  fungal: { name: 'Fungal Grotto', pal: 2, color: '#1ebc73', bg: '#0f1a1d', rocks: 0.25, rich: 0.05, blooms: 0.6, shrooms: 0.4, mobs: ['zombie', 'ratfolk'] },
+  bones: { name: 'Bone Pits', pal: 3, color: '#c8ac99', bg: '#1d1418', rocks: 0.4, rich: 0.1, blooms: 0.05, shrooms: 0.1, mobs: ['skeleton', 'zombie', 'bandit'] },
 };
 TA.CLIFF_PAL = 4;
 

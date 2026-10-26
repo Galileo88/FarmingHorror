@@ -113,147 +113,39 @@ ICONS = {
 
 
 # ---------------------------------------------------------------- caves
-# One palette per cave biome (and 'cliff' for the surface rock walls):
-# deep, base, speck, rim, top (moss/crust), drip
-CAVE_PALETTES = [
-    ('caverns', ['#2e222f', '#3e3546', '#45293f', '#625565', '#7f708a', '#9babb2']),
-    ('crystal', ['#2e222f', '#45293f', '#3e3546', '#6b3e75', '#905ea9', '#a884f3']),
-    ('fungal', ['#2e222f', '#3e3546', '#323353', '#165a4c', '#239063', '#1ebc73']),
-    ('bones', ['#2e222f', '#45293f', '#3e3546', '#6e2727', '#c8ac99', '#ad8266']),
-    ('cliff', ['#3e3546', '#625565', '#45293f', '#7f708a', '#239063', '#9babb2']),
+# The cave tileset (assets/cave/tileset.png) is two colours. Each cave biome gets
+# a recoloured copy, stacked in assets/art/cave_tiles.png in TA.CAVE_BIOMES pal order.
+CAVE_SRC = [(39, 39, 68), (73, 77, 126)]  # dark interior, rock rim
+CAVE_RECOLOURS = [
+    ('caverns', None),
+    ('crystal', [(45, 30, 70), (110, 72, 150)]),
+    ('fungal', [(24, 44, 48), (44, 98, 92)]),
+    ('bones', [(48, 34, 40), (118, 82, 74)]),
 ]
 
 
-def _h(*n):
-    """Small deterministic hash -> [0, 1)."""
-    v = 2166136261
-    for k in n:
-        v = ((v ^ (k & 0xffffffff)) * 16777619) & 0xffffffff
-        v ^= v >> 13
-    return (v & 0xffff) / 65536.0
-
-
-def cave_tiles(img, row, pal):
-    deep, base, speck, rim, top, drip = [rgba(c) for c in pal]
-    oy = row * 8
-    for t in range(5):  # floor top, fill, fill 2, ceiling bottom, platform
-        for y in range(8):
-            for x in range(8):
-                c = base
-                v = _h(row, t, x, y)
-                if v < 0.16: c = speck
-                elif v > 0.93: c = deep
-                if t == 0:
-                    if y == 0: c = top if _h(x, 9, row) < 0.8 else rim
-                    elif y == 1: c = rim if _h(x, 3, row) < 0.7 else top
-                    elif y == 2 and _h(x, 4, row) < 0.3: c = rim
-                if t == 2 and (x + y * 3) % 7 == 0: c = speck
-                if t == 3:
-                    if y == 7: c = rim if _h(x, 5, row) < 0.6 else deep
-                    elif y == 6 and _h(x, 6, row) < 0.25: c = drip
-                if t == 4:
-                    if y >= 4: continue
-                    c = [top, rim, base, deep][y]
-                    if y == 1 and x in (0, 7): c = deep
-                img.putpixel((t * 8 + x, oy + y), c)
-
-
-def crystal(img, ox, oy, pal):
-    dark, mid, light, white = [rgba(PAL[k]) for k in pal]
-    shards = [(3, 9, 2), (6, 7, 2), (1, 5, 1), (8, 4, 1)]  # x, height, half width
-    for sx, hgt, hw in shards:
-        for y in range(hgt):
-            w = max(0, hw - (y * hw) // max(1, hgt - 2)) if y > hgt - 3 else hw
-            for x in range(sx - w, sx + w + 1):
-                if 0 <= x < 10:
-                    c = mid if x < sx else light
-                    if x == sx - w: c = dark
-                    if y == hgt - 1: c = white
-                    img.putpixel((ox + x, oy + 9 - y), c)
-
-
-def cave_mouth(img, ox, oy):
-    """40x24 rocky mound with a dark opening and a ladder poking out."""
-    deep, base, speck, rim, top, drip = [rgba(c) for c in CAVE_PALETTES[4][1]]
-    hole = rgba('#2e222f'); hole2 = rgba('#1b1320')
-    wood, wood2 = rgba('#805c45'), rgba('#4d3729')
-    W, H = 40, 24
-    for x in range(W):
-        d = abs(x - W / 2 + 0.5) / (W / 2)
-        hgt = int(H * (1 - d ** 2.2) - _h(x, 77) * 2)
-        for y in range(max(0, hgt)):
-            c = base if _h(x, y, 1) > 0.15 else speck
-            if y == hgt - 1: c = top if _h(x, 2) < 0.75 else rim
-            elif y == hgt - 2: c = rim
-            elif x < 4 or _h(x, y) > 0.95: c = deep
-            img.putpixel((ox + x, oy + H - 1 - y), c)
-    # opening
-    for y in range(14):
-        hw = int(8 * (1 - (y / 14) ** 2.4)) + 1
-        for x in range(20 - hw, 20 + hw):
-            img.putpixel((ox + x, oy + H - 1 - y), hole2 if abs(x - 19.5) < hw - 2 and y < 12 else hole)
-    # ladder rails + rungs
-    for y in range(17):
-        img.putpixel((ox + 17, oy + H - 1 - y), wood2)
-        img.putpixel((ox + 22, oy + H - 1 - y), wood2)
-        if y % 3 == 1:
-            for x in range(18, 22): img.putpixel((ox + x, oy + H - 1 - y), wood)
-
-
-def stalagmite(img, ox, oy, pal_row):
-    deep, base, speck, rim, top, drip = [rgba(c) for c in CAVE_PALETTES[pal_row][1]]
-    for y in range(12):
-        hw = max(0, int(3.5 * (1 - y / 12)))
-        for x in range(3 - hw, 4 + hw):
-            img.putpixel((ox + x, oy + 11 - y), rim if x < 3 else base)
-
-
-def glowshroom(img, ox, oy):
-    rows = [".mTTm.", "mTWTTm", "TTTTmT", "..ta..", "..ta..", ".atta."]
-    paint(img, rows, ox, oy)
-
-
-def cave_backdrop(out_path):
-    """Tileable far-wall silhouettes, one 160x96 band per cave biome."""
-    W, H = 160, 96
-    img = Image.new('RGBA', (W, H * 4), (0, 0, 0, 0))
-    for row, (_, pal) in enumerate(CAVE_PALETTES[:4]):
-        far = rgba(pal[0]); near = rgba(pal[2]); edge = rgba(pal[1])
-        for x in range(W):
-            # columns, stalactites from the top, mounds from the bottom (periodic in x)
-            import math
-            a = 2 * math.pi * x / W
-            top = 18 + 10 * math.sin(a * 3 + row) + 6 * math.sin(a * 7 + 1.3 * row)
-            bot = 30 + 12 * math.sin(a * 2 + 0.7 * row) + 5 * math.sin(a * 9)
-            spike = (x * 7 + row * 3) % 23
-            if spike < 3: top += 14 - spike * 4
-            for y in range(H):
-                yy = y
-                if yy < top or yy > H - bot:
-                    c = far
-                    if abs(yy - top) < 1.2 or abs(yy - (H - bot)) < 1.2: c = edge
-                    img.putpixel((x, row * H + y), c)
-                elif _h(x, y, row) < 0.012:
-                    img.putpixel((x, row * H + y), near)
-    img.save(out_path)
+def cave_tiles(out_dir):
+    src = os.path.join(out_dir, 'cave', 'tileset.png')
+    if not os.path.exists(src):
+        print('  no cave tileset; run build_assets.py'); return
+    base = Image.open(src).convert('RGBA')
+    sheet = Image.new('RGBA', (base.width, base.height * len(CAVE_RECOLOURS)), (0, 0, 0, 0))
+    for row, (_, cols) in enumerate(CAVE_RECOLOURS):
+        im = base.copy(); px = im.load()
+        if cols:
+            for y in range(im.height):
+                for x in range(im.width):
+                    r, g, b, a = px[x, y]
+                    if a and (r, g, b) in CAVE_SRC: px[x, y] = cols[CAVE_SRC.index((r, g, b))] + (a,)
+        sheet.paste(im, (0, row * base.height))
+    sheet.save(os.path.join(out_dir, 'art', 'cave_tiles.png'))
 
 
 def main(out_dir):
     art = os.path.join(out_dir, 'art')
     os.makedirs(art, exist_ok=True)
 
-    # cave.png: tile rows per palette (5 tiles of 8x8) + props
-    cave = Image.new('RGBA', (96, 80), (0, 0, 0, 0))
-    for r, (_, pal) in enumerate(CAVE_PALETTES):
-        cave_tiles(cave, r, pal)
-    crystal(cave, 48, 0, ['t', 'T', 'm', 'W'])
-    crystal(cave, 58, 0, ['v', 'V', 'm', 'W'])
-    glowshroom(cave, 68, 4)
-    for i in range(4):
-        stalagmite(cave, 48 + i * 8, 12, i)
-    cave_mouth(cave, 0, 48)
-    cave.save(os.path.join(art, 'cave.png'))
-    cave_backdrop(os.path.join(art, 'cave_bg.png'))
+    cave_tiles(out_dir)
 
     # crops.png: rows = crop types (CROP_ORDER), cols = stage 0..4 (16x16)
     img = Image.new('RGBA', (16 * 5, 16 * len(CROP_ORDER)), (0, 0, 0, 0))

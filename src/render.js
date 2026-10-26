@@ -263,14 +263,17 @@ TA.Renderer = class {
     const dark = !!opts.dark, alpha = opts.alpha ?? 1;
     const draw = () => {
       switch (o.kind) {
-        case 'decor': case 'tree': case 'bush': case 'rock':
+        case 'decor':
+          // roots hang down from the roof: their top sits at the ceiling
+          TA.drawSpr(ctx, o.spr, x, o.hang ? by + TA.SPR[o.spr][4] : by, o.flip, alpha, dark); break;
+        case 'tree': case 'bush': case 'rock':
           TA.drawSpr(ctx, o.spr, x, by, o.flip, alpha, dark); break;
         case 'struct':
           if (o.bld) TA.drawBuilding(ctx, o.bld, 17, x, by, alpha, o.flip, dark); else TA.drawSpr(ctx, o.spr, x, by, o.flip, alpha, dark);
           break;
         case 'flag': ctx.fillStyle = '#4d3729'; ctx.fillRect(TA.px(x - 2), by - 22, 1, 23); TA.drawFlag(ctx, o.flag, t, x, by - 8); break;
         case 'mushroom': TA.drawIcon(ctx, 'mushroom', x, by); break;
-        case 'glow': TA.drawSpr(ctx, 'glowshroom', x, by); break;
+        case 'glow': TA.drawSpr(ctx, o.spr, x, by, o.flip); break;
         case 'wildcrop': TA.drawCrop(ctx, o.crop, 4, x, by); break;
         case 'field':
           if (TA.img.soil) ctx.drawImage(TA.img.soil, 16, 0, 16, 6, TA.px(x - 8), by - 1, 16, 6);
@@ -284,7 +287,12 @@ TA.Renderer = class {
           const im = TA.img.chest; if (im) ctx.drawImage(im, game.world.opened[o.id] ? 16 : 0, 0, 16, 16, TA.px(x - 8), by - 16, 16, 16);
           break;
         }
-        case 'mouth': TA.drawSpr(ctx, 'cave_mouth', x, by + 1); break;
+        case 'mouth':
+          // a ladder poking up out of the hole, boulders either side
+          TA.drawSpr(ctx, 'rock_c', x - TA.HOLE - 6, by + 1);
+          TA.drawSpr(ctx, 'rock_d', x + TA.HOLE + 5, by + 1, true);
+          TA.drawSpr(ctx, 'g_ladder', x - 5, by + 8);
+          break;
         case 'portal': {
           TA.drawSpr(ctx, 'e_portal', x, by);
           const pulse = 0.35 + 0.25 * Math.sin(t * 3 + o.x);
@@ -422,13 +430,13 @@ TA.Renderer = class {
     const ctx = this.ctx, W = this.w, top = Math.max(0, this.baseY + TA.CRUST);
     const cb = TA.CAVE_BIOMES[game.world.caveBiomeAt(camX + W / 2)];
     ctx.fillStyle = cb.bg; ctx.fillRect(0, top, W, this.h - top);
-    const bg = TA.img.caveBg;
-    if (bg) {
-      // far walls, slow parallax, hung around the middle of the caves
-      const f = 0.35, by = TA.px(this.Y(-TA.CAVE_DEPTH + 150) + this.camY * 0.25);
-      let ox = TA.px(-(camX * f) % 160); if (ox > 0) ox -= 160;
-      ctx.globalAlpha = 0.85;
-      for (let x = ox; x < W; x += 160) ctx.drawImage(bg, 0, cb.pal * 96, 160, 96, x, by, 160, 96);
+    // the tileset's carved ring, faint and far off (half-speed parallax)
+    const im = TA.img.caveTiles;
+    if (im) {
+      const mod = (v, m) => ((v % m) + m) % m;
+      const ox = TA.px(-mod(camX * 0.5, 32)), oy = TA.px(mod(this.baseY * 0.5, 32) - 32);
+      ctx.globalAlpha = 0.1;
+      for (let y = oy; y < this.h; y += 32) if (y + 32 > top) for (let x = ox; x < W; x += 32) ctx.drawImage(im, 0, cb.pal * 48, 32, 32, x, y, 32, 32);
       ctx.globalAlpha = 1;
     }
     // daylight falling down the shafts
@@ -446,42 +454,44 @@ TA.Renderer = class {
       for (const s of w.shaftsOfRegion(i)) if (s.x > camX - 60 && s.x < camX + this.w + 60) out.push(s);
     return out;
   }
+  // The earth, autotiled from the cave tileset's 48px nine-slice. Every solid 8px
+  // cell picks an 8px piece by how far it is (1, 2 or more cells) from open air
+  // above, below and to each side, so exposed faces get the pale rim and its
+  // patterned edge, and the inside is plain dark rock.
   drawCaveRock(game, camX) {
-    const ctx = this.ctx, w = game.world, im = TA.img.cave; if (!im) return;
+    const ctx = this.ctx, w = game.world, im = TA.img.caveTiles; if (!im) return;
     const c0 = Math.floor(camX / 8) - 1, c1 = Math.floor((camX + this.w) / 8) + 1;
+    const F = {}, C = {};
+    for (let c = c0 - 2; c <= c1 + 2; c++) { F[c] = w.floorCol(c); C[c] = w.ceilCol(c); }
+    // the ground above counts as rock here, so only cave air puts a rim on a face
+    const solid = (c, r) => { const y0 = r * 8; return y0 >= 0 || y0 + 8 <= F[c] || y0 >= C[c]; };
+    // rows on screen, bottom to top; the ground tiles cover the crust (rows -1, -2)
+    const rLo = Math.floor((this.baseY - this.h) / 8) - 1, rHi = Math.min(-2, Math.ceil(this.baseY / 8));
     for (let c = c0; c <= c1; c++) {
       const X = TA.px(c * 8 - camX);
-      const pal = TA.CAVE_BIOMES[w.caveBiomeVis(c * 8 + 4)].pal * 8;
-      const F = w.floorCol(c), C = w.ceilCol(c);
-      // floor: crust on top, rock below to the bottom of the screen
-      const yF = this.Y(F);
-      ctx.drawImage(im, 0, pal, 8, 8, X, yF, 8, 8);
-      for (let y = yF + 8, k = 0; y < this.h; y += 8, k++) ctx.drawImage(im, (TA.hash(c, k) % 3 ? 8 : 16), pal, 8, 8, X, y, 8, 8);
-      // the step face where the floor drops away
-      const Fl = w.floorCol(c - 1), Fr = w.floorCol(c + 1);
-      ctx.fillStyle = TA.CAVE_EDGE[pal / 8];
-      if (Fl < F) ctx.fillRect(X, yF, 1, F - Fl);
-      if (Fr < F) ctx.fillRect(X + 7, yF, 1, F - Fr);
-      // the earth above the cave, from the cave roof up to the underside of the ground
-      if (C < -TA.CRUST) {
-        const yC = this.Y(C), yTop = this.Y(-TA.CRUST);
-        ctx.drawImage(im, 24, pal, 8, 8, X, yC - 8, 8, 8);
-        for (let y = yC - 16, k = 0; y >= yTop - 0.01 && y > -8; y -= 8, k++) ctx.drawImage(im, (TA.hash(c, k, 7) % 3 ? 8 : 16), pal, 8, 8, X, y, 8, 8);
-        // drips off the roof, and the walls of any shaft beside this column
-        const h = TA.hash(game.seed, c, 77);
-        ctx.fillStyle = TA.CAVE_EDGE[pal / 8];
-        if (h % 5 === 0) { ctx.fillRect(X + (h >>> 4) % 6, yC, 2, 2 + (h >>> 8) % 4); ctx.fillRect(X + (h >>> 4) % 6, yC + 2, 1, 2 + (h >>> 8) % 3); }
-        const Cl = w.ceilCol(c - 1), Cr = w.ceilCol(c + 1);
-        if (Cl > C) { const y = this.Y(Math.min(Cl, -TA.CRUST)); ctx.fillRect(X, y, 1, yC - y); }
-        if (Cr > C) { const y = this.Y(Math.min(Cr, -TA.CRUST)); ctx.fillRect(X + 7, y, 1, yC - y); }
+      const pal = TA.CAVE_BIOMES[w.caveBiomeVis(c * 8 + 4)].pal * 48;
+      for (let r = rLo; r <= rHi; r++) {
+        if (!solid(c, r)) continue;
+        // under the crust only draw where it overhangs a shaft
+        if (r === -2 && solid(c, r - 1)) continue;
+        let vy, hx;
+        if (!solid(c, r + 1)) vy = 0; else if (!solid(c, r + 2)) vy = 8;
+        else if (!solid(c, r - 1)) vy = 40; else if (!solid(c, r - 2)) vy = 32;
+        else vy = 16 + 8 * (r & 1);
+        if (!solid(c - 1, r)) hx = 0; else if (!solid(c - 2, r)) hx = 8;
+        else if (!solid(c + 1, r)) hx = 40; else if (!solid(c + 2, r)) hx = 32;
+        else hx = 16 + 8 * (c & 1);
+        ctx.drawImage(im, 32 + hx, pal + vy, 8, 8, X, this.Y(r * 8 + 8), 8, 8);
       }
     }
-    // ledges
+    // ledges: a thin slab cut from the top and bottom rims, capped at the ends
     for (const pl of w.platformsIn(camX - 8, camX + this.w + 8)) {
-      const pal = TA.CAVE_BIOMES[w.caveBiomeVis((pl.x0 + pl.x1) / 2)].pal * 8;
-      for (let x = pl.x0; x < pl.x1; x += 8) {
-        const tw = Math.min(8, pl.x1 - x);
-        ctx.drawImage(im, 32, pal, tw, 4, TA.px(x - camX), this.Y(pl.y), tw, 4);
+      const pal = TA.CAVE_BIOMES[w.caveBiomeVis((pl.x0 + pl.x1) / 2)].pal * 48, y = this.Y(pl.y);
+      for (let x = pl.x0, k = 0; x < pl.x1; x += 8, k++) {
+        const tw = Math.min(8, pl.x1 - x), last = x + 8 >= pl.x1;
+        const hx = k === 0 ? 0 : last ? 48 - tw : 16 + 8 * (k & 1);
+        ctx.drawImage(im, 32 + hx, pal, tw, 4, TA.px(x - camX), y, tw, 4);
+        ctx.drawImage(im, 32 + hx, pal + 44, tw, 4, TA.px(x - camX), y + 4, tw, 4);
       }
     }
   }
@@ -595,7 +605,6 @@ TA.Renderer = class {
 };
 
 TA.GROUND_VARIANTS = [1, 2, 3, 4, 5, 6, 7, 10, 11];
-TA.CAVE_EDGE = ['#7f708a', '#905ea9', '#239063', '#c8ac99', '#9babb2'];
 
 // ---------------------------------------------------------------- tiny 3x5 pixel font for numbers
 TA.GLYPHS = {

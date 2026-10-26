@@ -220,8 +220,9 @@ TA.World = class {
   }
 
   // Cave mouths. Each is a shaft: a hole in the ground with a trapdoor, and a
-  // ladder of ledges from a flat landing on the cave floor up to just under the hole. Regions next to a hidden biome always get one
-  // close to the cliff, and hidden biomes get one just inside each cliff.
+  // ladder of ledges from a flat landing on the cave floor up to just under the
+  // hole. Regions next to a hidden biome always get one close to the cliff, and
+  // hidden biomes get one just inside each cliff.
   shaftsOfRegion(i) {
     if (this.shaftMemo.has(i)) return this.shaftMemo.get(i);
     const out = [];
@@ -244,6 +245,7 @@ TA.World = class {
       while (tries++ < 8 && (this.poiAt(x, 40) || (this.avoidX !== null && Math.abs(x - this.avoidX) < TA.CLAIM_RADIUS + 40) || out.some(s => Math.abs(s.x - x) < 200)))
         x += (x - start < TA.REGION / 2 ? 1 : -1) * 90;
       if (tries >= 8) continue;
+      x = Math.floor(x / 8) * 8 + 4; // centre the hole on a tile column, so it is exactly 3 columns wide
       out.push(this.buildShaft(`s${i}_${out.length}`, x));
     }
     return out;
@@ -471,7 +473,8 @@ TA.World = class {
       if (r() < 0.3) add({ kind: 'chest', x: Math.round((px0 + px1) / 2), y, layer: 'c', tier: 2 });
       else if (r() < 0.5) add({ kind: 'rock', x: Math.round((px0 + px1) / 2), y, layer: 'c', spr: 'rock_a', hp: 6, maxHp: 6, gems: true, rich: true, regrow: 5 });
     }
-    // floor dressing, ore and crystals
+    // floor dressing: ore, glowing blooms, mushrooms, tufts
+    const tufts = ['tuft_a', 'tuft_b', 'tuft_c', 'tuft_d', 'vmush'];
     for (let x = x0 + 6; x < x1; x += 22) {
       const xx = x + r.int(-5, 5);
       const cb = TA.CAVE_BIOMES[this.caveBiomeVis(xx)];
@@ -479,12 +482,19 @@ TA.World = class {
       // keep flat footing: skip spots right on a step
       if (this.floorAt(xx - 5) !== y || this.floorAt(xx + 5) !== y || nearShaft(xx, 30)) continue;
       const v = r();
-      if (v < cb.rocks * 0.35) add({ kind: 'rock', x: xx, y, layer: 'c', spr: r.pick(['rock_a', 'rock_b', 'rock_c']), hp: 4, maxHp: 4, gems: true, regrow: 5 });
-      else if (v < (cb.rocks + cb.crystals) * 0.35) add({ kind: 'rock', x: xx, y, layer: 'c', spr: r() < 0.5 ? 'crystal_t' : 'crystal_p', hp: 4, maxHp: 4, gems: true, rich: true, crystal: true, regrow: 6, light: 20 });
-      else if (v < (cb.rocks + cb.crystals + cb.shrooms) * 0.35) add({ kind: r() < 0.5 ? 'mushroom' : 'glow', x: xx, y, layer: 'c', regrow: 2, light: 16 });
-      else if (v < 0.75) add({ kind: 'decor', x: xx, y, layer: 'c', spr: 'stalag_' + cb.pal, flip: r() < 0.5, back: true });
-      else if (v < 0.82) add({ kind: 'decor', x: xx, y, layer: 'c', spr: 'stalag_' + cb.pal, flip: r() < 0.5, front: true, dy: r.int(3, 6) });
-      else if (v < 0.86 && cb === TA.CAVE_BIOMES.bones) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(['g_ribs3', 'g_tusk', 'g_tusk2']) });
+      if (v < cb.rocks * 0.35) { const rich = r() < cb.rich; add({ kind: 'rock', x: xx, y, layer: 'c', spr: rich ? 'rock_a' : r.pick(['rock_a', 'rock_b', 'rock_c']), hp: rich ? 6 : 4, maxHp: rich ? 6 : 4, gems: true, rich, regrow: 5 }); }
+      else if (v < (cb.rocks + cb.blooms) * 0.35) add({ kind: 'glow', x: xx, y, layer: 'c', spr: r.pick(['bloom_a', 'bloom_b', 'bloom_c', 'bloom_d', 'bloom_e', 'bloom_f']), flip: r() < 0.5, regrow: 2, light: 14 });
+      else if (v < (cb.rocks + cb.blooms + cb.shrooms) * 0.35) add({ kind: 'mushroom', x: xx, y, layer: 'c', regrow: 2 });
+      else if (v < 0.72) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(tufts), flip: r() < 0.5, back: true });
+      else if (v < 0.8) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(tufts.concat(['bloom_g'])), flip: r() < 0.5, front: true, dy: r.int(2, 4) });
+      else if (v < 0.84 && cb === TA.CAVE_BIOMES.bones) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(['g_ribs3', 'g_tusk', 'g_tusk2']) });
+    }
+    // roots hanging from the roof (and from the underside of the ground in shafts)
+    for (let x = x0 + 8; x < x1; x += 16) {
+      if (r() > 0.24) continue;
+      const xx = x + r.int(-4, 4), C = this.ceilAt(xx);
+      if (C > 1e3 || this.ceilAt(xx - 7) !== C || this.ceilAt(xx + 7) !== C) continue;
+      add({ kind: 'decor', hang: true, x: xx, y: C, layer: 'c', spr: r.pick(['root_a', 'root_b', 'root_c', 'root_d', 'root_e', 'root_e', 'root_f']), flip: r() < 0.5 });
     }
     // lairs
     if (r() < 0.55) {
