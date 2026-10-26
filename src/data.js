@@ -284,7 +284,7 @@ TA.CAVE_BIOMES = {
   fungal: { name: 'Fungal Grotto', pal: 2, color: '#1ebc73', bg: '#0f1a1d', rocks: 0.25, rich: 0.05, blooms: 0.6, shrooms: 0.4, mobs: ['zombie', 'ratfolk'] },
   bones: { name: 'Bone Pits', pal: 3, color: '#c8ac99', bg: '#1d1418', rocks: 0.4, rich: 0.1, blooms: 0.05, shrooms: 0.1, mobs: ['skeleton', 'zombie', 'bandit'] },
 };
-TA.CLIFF_PAL = 4;
+TA.CLIFF_PAL = 4;          // the cliffs' recolour of the cave tileset
 
 // Weather. tone: [multiply colour, strength], sat = how much colour drains away,
 // sky = grey wash over the sky, warm = golden soft-light

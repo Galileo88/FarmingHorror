@@ -121,6 +121,7 @@ CAVE_RECOLOURS = [
     ('crystal', [(45, 30, 70), (110, 72, 150)]),
     ('fungal', [(24, 44, 48), (44, 98, 92)]),
     ('bones', [(48, 34, 40), (118, 82, 74)]),
+    ('cliff', [(62, 53, 70), (127, 112, 138)]),  # surface rock, the Tiny Thrones stone colours
 ]
 
 

@@ -387,41 +387,43 @@ TA.Renderer = class {
     }
   }
 
-  // Rock walls around hidden biomes: taller than the screen, ragged and
-  // stratified, lit from the left, with moss on the ledges
+  // Rock walls around hidden biomes: a spire autotiled from the cave tileset in
+  // surface-rock colours, flaring at the foot, ragged up past the top of the screen
   drawCliffs(ctx, game, camX) {
-    const gy = this.baseY, seed = game.seed;
-    const [deep, base, speck, rim, moss] = ['#2e222f', '#625565', '#45293f', '#7f708a', '#239063'];
+    const im = TA.img.caveTiles; if (!im) return;
+    const seed = game.seed, pal = TA.CLIFF_PAL * 48;
+    const rHi = Math.ceil(this.baseY / 8) + 1; // rows up to the top of the screen
     for (const e of game.world.cliffsIn(camX - 80, camX + this.w + 80)) {
-      for (let y = gy + 4, k = 0; y > -4; y -= 2, k++) {
-        const up = gy - y;
-        // flares out at the foot, ragged all the way up
-        const flare = Math.max(0, 14 - up * 0.35);
-        const l = e - TA.CLIFF_W - 4 - flare + TA.noise1(seed ^ e, k / 5) * 6;
-        const r = e + TA.CLIFF_W + 4 + flare - TA.noise1(seed ^ (e + 1), k / 5) * 6;
-        const L = TA.px(l - camX), R = TA.px(r - camX);
-        ctx.fillStyle = base; ctx.fillRect(L, y, R - L, 2);
-        ctx.fillStyle = rim; ctx.fillRect(L, y, 3, 2);
-        ctx.fillStyle = '#4b3f52'; ctx.fillRect(R - 6, y, 6, 2);
-        ctx.fillStyle = deep; ctx.fillRect(R - 1, y, 1, 2);
-        // cracks and speckles
-        const h = TA.hash(seed, e, k);
-        ctx.fillStyle = speck;
-        if (h % 3 === 0) ctx.fillRect(L + 4 + (h >>> 3) % Math.max(1, R - L - 10), y, 2, 2);
-        if (h % 7 === 0) ctx.fillRect(L + 4 + (h >>> 9) % Math.max(1, R - L - 10), y, 1, 4);
-        // strata: a ledge line every so often, with moss on top
-        if (k % 9 === 0 && k > 2) {
-          ctx.fillStyle = rim; ctx.fillRect(L - 1, y, R - L - 4, 1);
-          ctx.fillStyle = moss;
-          for (let x = L; x < R - 6; x += 3) if (TA.hash(seed, e, k, x) % 3) ctx.fillRect(x, y - 1, 2, 1);
-        }
+      const ec = Math.floor(e / 8);
+      // cells each side of the line, per 8px row: a steady 40px foot (walkers stop
+      // just short of it, see World.surfaceClamp), tapering and ragged above
+      const half = (r, side) => r < 2 ? 5 : 2 + Math.max(0, 3 - Math.floor(r / 2)) + (TA.hash(seed, e, r, side) % 3 === 0 ? 1 : 0);
+      const solid = (c, r) => r < 0 || r > rHi || (c < ec ? ec - c <= half(r, 0) : c - ec < half(r, 1));
+      for (let c = ec - 8; c <= ec + 8; c++) for (let r = 0; r <= rHi; r++) {
+        if (!solid(c, r)) continue;
+        const [hx, vy] = this.tilePiece(solid, c, r);
+        ctx.drawImage(im, 32 + hx, pal + vy, 8, 8, TA.px(c * 8 - camX), this.Y(r * 8 + 8), 8, 8);
       }
       // grass and boulders at the foot
-      TA.drawSpr(ctx, 'grass_t', e - TA.CLIFF_W - 18 - camX, gy + 3);
-      TA.drawSpr(ctx, 'grass_o', e + TA.CLIFF_W + 18 - camX, gy + 3, true);
-      TA.drawSpr(ctx, 'rock_a', e - TA.CLIFF_W - 12 - camX, gy + 5);
-      TA.drawSpr(ctx, 'rock_c', e + TA.CLIFF_W + 14 - camX, gy + 5);
+      TA.drawSpr(ctx, 'grass_t', e - TA.CLIFF_W - 26 - camX, this.baseY + 3);
+      TA.drawSpr(ctx, 'grass_o', e + TA.CLIFF_W + 26 - camX, this.baseY + 3, true);
+      TA.drawSpr(ctx, 'rock_a', e - TA.CLIFF_W - 20 - camX, this.baseY + 5);
+      TA.drawSpr(ctx, 'rock_c', e + TA.CLIFF_W + 22 - camX, this.baseY + 5);
     }
+  }
+  // Which 8px piece of the tileset's 48px nine-slice a solid cell uses: by how far
+  // it is (1, 2 or more cells) from open air above, below and to each side, so
+  // exposed faces get the pale rim and its patterned edge and the inside is plain.
+  // Returns [x, y] within the nine-slice.
+  tilePiece(solid, c, r) {
+    let vy, hx;
+    if (!solid(c, r + 1)) vy = 0; else if (!solid(c, r + 2)) vy = 8;
+    else if (!solid(c, r - 1)) vy = 40; else if (!solid(c, r - 2)) vy = 32;
+    else vy = 16 + 8 * (r & 1);
+    if (!solid(c - 1, r)) hx = 0; else if (!solid(c - 2, r)) hx = 8;
+    else if (!solid(c + 1, r)) hx = 40; else if (!solid(c + 2, r)) hx = 32;
+    else hx = 16 + 8 * (c & 1);
+    return [hx, vy];
   }
 
   // ------------------------------------------------------------ caves
@@ -454,10 +456,7 @@ TA.Renderer = class {
       for (const s of w.shaftsOfRegion(i)) if (s.x > camX - 60 && s.x < camX + this.w + 60) out.push(s);
     return out;
   }
-  // The earth, autotiled from the cave tileset's 48px nine-slice. Every solid 8px
-  // cell picks an 8px piece by how far it is (1, 2 or more cells) from open air
-  // above, below and to each side, so exposed faces get the pale rim and its
-  // patterned edge, and the inside is plain dark rock.
+  // The earth, autotiled from the cave tileset (see tilePiece).
   drawCaveRock(game, camX) {
     const ctx = this.ctx, w = game.world, im = TA.img.caveTiles; if (!im) return;
     const c0 = Math.floor(camX / 8) - 1, c1 = Math.floor((camX + this.w) / 8) + 1;
@@ -474,13 +473,7 @@ TA.Renderer = class {
         if (!solid(c, r)) continue;
         // under the crust only draw where it overhangs a shaft
         if (r === -2 && solid(c, r - 1)) continue;
-        let vy, hx;
-        if (!solid(c, r + 1)) vy = 0; else if (!solid(c, r + 2)) vy = 8;
-        else if (!solid(c, r - 1)) vy = 40; else if (!solid(c, r - 2)) vy = 32;
-        else vy = 16 + 8 * (r & 1);
-        if (!solid(c - 1, r)) hx = 0; else if (!solid(c - 2, r)) hx = 8;
-        else if (!solid(c + 1, r)) hx = 40; else if (!solid(c + 2, r)) hx = 32;
-        else hx = 16 + 8 * (c & 1);
+        const [hx, vy] = this.tilePiece(solid, c, r);
         ctx.drawImage(im, 32 + hx, pal + vy, 8, 8, X, this.Y(r * 8 + 8), 8, 8);
       }
     }
