@@ -6,7 +6,9 @@ Built with [Phaser 4](https://phaser.io) in plain JavaScript, with no build step
 
 ## Play it
 
-**Quickest:** double-click `index.html`. It opens in your browser and runs offline.
+**Online:** https://galileo88.github.io/FarmingHorror/
+
+**Offline:** double-click `index.html`. It opens in your browser and runs offline.
 
 **Or run a local server.** You'll need one once you add PNG art, because browsers block loading image files straight from disk:
 
@@ -18,7 +20,7 @@ npx serve .
 
 Then open http://localhost:8000.
 
-**Share it online:** in the GitHub repo, go to **Settings → Pages**, pick the `main` branch and the root folder, then save. The game will be live at `https://<your-username>.github.io/FarmingHorror/`.
+**Publishing:** GitHub Pages serves the `main` branch as-is (Settings → Pages → Deploy from a branch → `main` / root). Every push to `main` updates the online version within a minute or two. The empty `.nojekyll` file tells Pages to skip its Jekyll step and serve the files directly.
 
 ## Controls
 
