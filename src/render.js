@@ -15,7 +15,6 @@ TA.Renderer = class {
     this.ctx = canvas.getContext('2d');
     this.setC = document.createElement('canvas');    // one parallax set, opaque
     this.skyA = document.createElement('canvas');    // a biome's sky (time-of-day sets mixed)
-    this.skyB = document.createElement('canvas');
     this.light = document.createElement('canvas');   // darkness mask (world resolution, upscaled smooth)
     this.glow = document.createElement('canvas');    // warm light added on top
     this.camX = 0; this.camY = 0;
@@ -33,7 +32,7 @@ TA.Renderer = class {
     // pixels are plenty) and the light masks are nothing but soft gradients.
     this.skyRes = Math.min(this.scale, 2);
     this.canvas.width = this.w * this.scale; this.canvas.height = this.h * this.scale;
-    for (const c of [this.setC, this.skyA, this.skyB]) { c.width = this.w * this.skyRes; c.height = this.h * this.skyRes; c.res = this.skyRes; }
+    for (const c of [this.setC, this.skyA]) { c.width = this.w * this.skyRes; c.height = this.h * this.skyRes; c.res = this.skyRes; }
     for (const c of [this.light, this.glow]) { c.width = this.w; c.height = this.h; c.res = 1; }
     this.canvas.style.width = this.w * this.scale + 'px';
     this.canvas.style.height = this.h * this.scale + 'px';
@@ -91,20 +90,9 @@ TA.Renderer = class {
   }
   drawSky(game, camX) {
     const ctx = this.ctx, hour = game.time;
-    const bd = game.world.band(camX + this.w / 2);
-    if (bd.w <= 0 || bd.w >= 1 || bd.cliff) {
-      if (bd.cliff && bd.a !== bd.b) {
-        // a cliff splits the view: each side shows its own sky
-        const ex = bd.edge - camX;
-        this.drawBiomeSky(this.skyA, bd.a, camX, hour);
-        this.drawBiomeSky(this.skyB, bd.b, camX, hour);
-        TA.clipHalf(ctx, -1, ex, () => this.blit(this.skyA));
-        TA.clipHalf(ctx, 1, ex, () => this.blit(this.skyB));
-      } else { this.drawBiomeSky(this.skyA, bd.w >= 1 ? bd.b : bd.a, camX, hour); this.blit(this.skyA); }
-    } else {
-      this.drawBiomeSky(this.skyA, bd.a, camX, hour); this.blit(this.skyA);
-      this.drawBiomeSky(this.skyB, bd.b, camX, hour); this.blit(this.skyB, bd.w);
-    }
+    // the sky of the land you are in (borders are crossed in a cut, never seen)
+    this.drawBiomeSky(this.skyA, game.world.biomeAt(game.player.x), camX, hour);
+    this.blit(this.skyA);
     // weather greys the sky out
     const w = game.weatherNow();
     if (w.def.sky) { ctx.fillStyle = `rgba(104,112,128,${w.def.sky * w.k})`; ctx.fillRect(0, 0, this.w, this.baseY); }
@@ -223,11 +211,10 @@ TA.Renderer = class {
     const ps = sx(p.x), py = this.Y(p.y);
     for (const o of objs) if (o.front) {
       const x = sx(o.x), by = this.Y(o.y || 0) + (o.dy || 0), w = TA.objW(o), h = TA.objH(o);
-      // see-through when it would hide the player
-      const hides = h > 9 && Math.abs(x - ps) < w / 2 + 3 && py > by - h - 2;
+      // see-through when it would hide the player (except a border thicket, whose job that is)
+      const hides = !o.screen && h > 9 && Math.abs(x - ps) < w / 2 + 3 && py > by - h - 2;
       this.drawObj(ctx, game, o, x, by, t, { alpha: hides ? 0.45 : 1 });
     }
-    if (skyVis) this.drawCliffs(ctx, game, camX);
 
     // darkness & light
     this.drawLight(game, objs, camX);
@@ -366,14 +353,9 @@ TA.Renderer = class {
     ctx.clip('evenodd');
     for (let t = t0; t <= t1; t++) {
       const x = t * 16;
-      const bd = game.world.band(x + 8);
+      const im = TA.img[TA.BIOMES[game.world.biomeAt(x + 8)].tiles]; if (!im) continue;
       const v = TA.GROUND_VARIANTS[TA.hash(game.seed, t, 3) % TA.GROUND_VARIANTS.length];
-      const ka = TA.BIOMES[bd.a].tiles, kb = TA.BIOMES[bd.b].tiles;
-      const X = TA.px(x - camX);
-      // two tilesets cross-fade tile by tile across the border band
-      if (bd.w < 1 && TA.img[ka]) ctx.drawImage(TA.img[ka], v * 16, 0, 16, 16, X, gy, 16, 16);
-      if (bd.w > 0 && TA.img[kb] && kb !== ka) { ctx.globalAlpha = bd.w; ctx.drawImage(TA.img[kb], v * 16, 0, 16, 16, X, gy, 16, 16); ctx.globalAlpha = 1; }
-      else if (bd.w >= 1 && TA.img[kb]) ctx.drawImage(TA.img[kb], v * 16, 0, 16, 16, X, gy, 16, 16);
+      ctx.drawImage(im, v * 16, 0, 16, 16, TA.px(x - camX), gy, 16, 16);
     }
     ctx.restore();
     // hole rims, and the trapdoor planks you drop through
@@ -387,30 +369,6 @@ TA.Renderer = class {
     }
   }
 
-  // Rock walls around hidden biomes: a spire autotiled from the cave tileset in
-  // surface-rock colours, flaring at the foot, ragged up past the top of the screen
-  drawCliffs(ctx, game, camX) {
-    const im = TA.img.caveTiles; if (!im) return;
-    const seed = game.seed, pal = TA.CLIFF_PAL * 48;
-    const rHi = Math.ceil(this.baseY / 8) + 1; // rows up to the top of the screen
-    for (const e of game.world.cliffsIn(camX - 80, camX + this.w + 80)) {
-      const ec = Math.floor(e / 8);
-      // cells each side of the line, per 8px row: a steady 40px foot (walkers stop
-      // just short of it, see World.surfaceClamp), tapering and ragged above
-      const half = (r, side) => r < 2 ? 5 : 2 + Math.max(0, 3 - Math.floor(r / 2)) + (TA.hash(seed, e, r, side) % 3 === 0 ? 1 : 0);
-      const solid = (c, r) => r < 0 || r > rHi || (c < ec ? ec - c <= half(r, 0) : c - ec < half(r, 1));
-      for (let c = ec - 8; c <= ec + 8; c++) for (let r = 0; r <= rHi; r++) {
-        if (!solid(c, r)) continue;
-        const [hx, vy] = this.tilePiece(solid, c, r);
-        ctx.drawImage(im, 32 + hx, pal + vy, 8, 8, TA.px(c * 8 - camX), this.Y(r * 8 + 8), 8, 8);
-      }
-      // grass and boulders at the foot
-      TA.drawSpr(ctx, 'grass_t', e - TA.CLIFF_W - 26 - camX, this.baseY + 3);
-      TA.drawSpr(ctx, 'grass_o', e + TA.CLIFF_W + 26 - camX, this.baseY + 3, true);
-      TA.drawSpr(ctx, 'rock_a', e - TA.CLIFF_W - 20 - camX, this.baseY + 5);
-      TA.drawSpr(ctx, 'rock_c', e + TA.CLIFF_W + 22 - camX, this.baseY + 5);
-    }
-  }
   // Which 8px piece of the tileset's 48px nine-slice a solid cell uses: by how far
   // it is (1, 2 or more cells) from open air above, below and to each side, so
   // exposed faces get the pale rim and its patterned edge and the inside is plain.
@@ -521,12 +479,9 @@ TA.Renderer = class {
       }
     }
     // colour grade: the biome's own tint, then the weather's
-    const bd = game.world.band(camX + W / 2);
+    const [col, s] = TA.BIOMES[game.world.biomeAt(game.player.x)].grade;
     ctx.globalCompositeOperation = 'soft-light';
-    for (const [b, a] of [[bd.a, 1 - bd.w], [bd.b, bd.w]]) {
-      const [col, s] = TA.BIOMES[b].grade;
-      if (a > 0 && s > 0) { ctx.globalAlpha = a * s; ctx.fillStyle = col; ctx.fillRect(0, 0, W, H); }
-    }
+    if (s > 0) { ctx.globalAlpha = s; ctx.fillStyle = col; ctx.fillRect(0, 0, W, H); }
     if (d.warm && k > 0) { ctx.globalAlpha = d.warm * k; ctx.fillStyle = '#ffc070'; ctx.fillRect(0, 0, W, H); }
     ctx.globalAlpha = 1;
     if (d.tone && k > 0) {

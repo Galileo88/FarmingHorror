@@ -4,8 +4,9 @@
 // Under the whole strip, TA.CAVE_DEPTH below the ground, run the caves: a
 // stepped floor with one-way ledges, reached by dropping through a shaft and left
 // by jumping back up it. It is all one space: heights are world heights, 0 is the
-// surface and the caves are negative. Some biomes are walled in by cliffs and can
-// only be reached from below.
+// surface and the caves are negative. Where two biomes meet there is a thicket
+// you travel through; the thickets around hidden biomes can't be crossed, so
+// those can only be reached from below.
 // Everything is derived from the seed; only changes (felled trees, opened
 // chests, cleared camps) are stored in the save.
 // ============================================================================
@@ -71,45 +72,29 @@ TA.World = class {
   biomeAt(x) { return this.biomeOfRegion(this.regionOf(x)); }
   isHidden(i) { return !!TA.BIOMES[this.biomeOfRegion(i)].hidden; }
 
-  // The two biomes around x and how far x is into the right one (0..1).
-  // Ordinary borders mix over a wide band; cliff borders switch at the cliff.
-  band(x) {
-    const i = this.regionOf(x), start = this.regionStart(i), end = start + TA.REGION, B = TA.BLEND;
-    let li, edge;
-    if (x - start < B) { li = i - 1; edge = start; }
-    else if (end - x < B) { li = i; edge = end; }
-    else { const a = this.biomeOfRegion(i); return { a, b: a, w: 0, edge: null, cliff: false }; }
-    const a = this.biomeOfRegion(li), b = this.biomeOfRegion(li + 1);
-    const cliff = !!TA.BIOMES[a].hidden !== !!TA.BIOMES[b].hidden;
-    const w = a === b ? 0 : cliff ? (x < edge ? 0 : 1) : TA.smooth(TA.clamp((x - edge + B) / (2 * B), 0, 1));
-    return { a, b, w, edge, cliff };
-  }
-  // Biome for decoration at x: dithered across the mixing band so borders feather
-  biomeVis(x, salt = 0) {
-    const bd = this.band(x);
-    if (bd.w <= 0) return bd.a;
-    if (bd.w >= 1) return bd.b;
-    return TA.hash01(this.seed, Math.floor(x), salt, 51) < bd.w ? bd.b : bd.a;
-  }
   danger(x) {
     const i = Math.abs(this.regionOf(x));
     return TA.BIOMES[this.biomeAt(x)].danger + Math.floor(i / 2);
   }
 
-  // ------------------------------------------------------------ cliffs (surface walls around hidden biomes)
-  cliffsIn(x0, x1) {
+  // ------------------------------------------------------------ borders
+  // Where two different biomes meet stands a thicket. Nothing walks through it:
+  // the player is asked whether to travel on (Game.update). The thickets around
+  // hidden biomes (blocked) can't be crossed at all.
+  bordersIn(x0, x1) {
     const out = [];
-    for (let i = this.regionOf(x0 - TA.CLIFF_W); i <= this.regionOf(x1 + TA.CLIFF_W) + 1; i++) {
-      const e = this.regionStart(i);
-      if (e < x0 - TA.CLIFF_W - 40 || e > x1 + TA.CLIFF_W + 40) continue;
-      if (this.isHidden(i) !== this.isHidden(i - 1)) out.push(e);
+    for (let i = this.regionOf(x0 - TA.BORDER); i <= this.regionOf(x1 + TA.BORDER) + 1; i++) {
+      const x = this.regionStart(i);
+      if (x < x0 - TA.BORDER - 40 || x > x1 + TA.BORDER + 40) continue;
+      const a = this.biomeOfRegion(i - 1), b = this.biomeOfRegion(i);
+      if (a !== b) out.push({ x, a, b, blocked: !!TA.BIOMES[a].hidden !== !!TA.BIOMES[b].hidden });
     }
     return out;
   }
-  // Clamp a surface move from x to nx so nothing walks through a cliff
+  // Clamp a surface move from x to nx so nothing walks through a thicket
   surfaceClamp(x, nx) {
-    for (const e of this.cliffsIn(Math.min(x, nx) - 30, Math.max(x, nx) + 30)) {
-      const lo = e - TA.CLIFF_W - 22, hi = e + TA.CLIFF_W + 22; // the foot of the cliff flares out
+    for (const bd of this.bordersIn(Math.min(x, nx) - 30, Math.max(x, nx) + 30)) {
+      const lo = bd.x - TA.BORDER, hi = bd.x + TA.BORDER;
       if (x <= lo && nx > lo) return lo;
       if (x >= hi && nx < hi) return hi;
     }
@@ -131,14 +116,14 @@ TA.World = class {
     };
     if (i === 0) push('village', (r() < 0.5 ? -1 : 1) * r.int(560, 640)); // a village near the start, never on it
     else {
-      let cursor = start + TA.BLEND - 40 + r.int(0, 160);
+      let cursor = start + TA.BORDER_CLEAR - 40 + r.int(0, 160);
       const want = r.int(1, 3);
       const hidden = biome.hidden;
       for (let k = 0; k < 6 && out.length < want; k++) {
         let type = hidden && k === 0 ? 'shrine' : r.pick(biome.pois);
         if (Math.abs(i) === 1 && (type === 'camp' || type === 'warcamp' || type === 'city')) type = 'ruin';
         const w = TA.POI_DEFS[type].w;
-        if (cursor + w > end - TA.BLEND + 40) { if (w > 400) continue; else break; }
+        if (cursor + w > end - TA.BORDER_CLEAR + 40) { if (w > 400) continue; else break; }
         if (push(type, cursor + w / 2)) cursor += w;
         cursor += r.int(160, 420);
       }
@@ -221,8 +206,8 @@ TA.World = class {
 
   // Cave mouths. Each is a shaft: a hole in the ground with a trapdoor, and a
   // ladder of ledges from a flat landing on the cave floor up to just under the
-  // hole. Regions next to a hidden biome always get one close to the cliff, and
-  // hidden biomes get one just inside each cliff.
+  // hole. Regions next to a hidden biome always get one close to its thicket,
+  // and hidden biomes get one just inside each of theirs.
   shaftsOfRegion(i) {
     if (this.shaftMemo.has(i)) return this.shaftMemo.get(i);
     const out = [];
@@ -293,7 +278,7 @@ TA.World = class {
     if (ruin && roll < 0.5) return { id, x: ruin.x + 64, layer: 's', y: 0, where: 'ruin' };
     const free = x => !this.poiAt(x, 30) && !this.shaftAt(x, 70) && (this.avoidX === null || Math.abs(x - this.avoidX) > TA.CLAIM_RADIUS + 30);
     for (let k = 0; k < 10; k++) {
-      const x = start + r.int(TA.BLEND + 40, TA.REGION - TA.BLEND - 40);
+      const x = start + r.int(TA.BORDER_CLEAR + 40, TA.REGION - TA.BORDER_CLEAR - 40);
       if (!free(x)) continue;
       if (roll < 0.78) return { id, x, layer: 'c', y: this.floorAt(x), where: 'cave' };
       return { id, x, layer: 's', y: 0, where: 'wild' };
@@ -366,14 +351,14 @@ TA.World = class {
     let n = 0;
     const take = (o) => { o.gone = this.isRemoved(o.id, o.regrow, day); objects.push(o); };
     const add = (o) => { o.id = `${c}:${n++}`; take(o); return o; };
-    const cliffNear = x => this.cliffsIn(x - 60, x + 60).some(e => Math.abs(e - x) < TA.CLIFF_W + 34);
-    const blocked = (x, pad) => this.poiAt(x, pad) || Math.abs(x) < 34 || this.shaftAt(x, 26 + pad) || cliffNear(x); // keep the start camp clear
+    const thicket = x => this.bordersIn(x - 70, x + 70).some(b => Math.abs(b.x - x) < 64);
+    const blocked = (x, pad) => this.poiAt(x, pad) || Math.abs(x) < 34 || this.shaftAt(x, 26 + pad) || thicket(x); // keep the start camp clear
     const pal = b => b.trees.teal >= 0.5 ? 't' : 'o';
 
     // ---------------- surface
     // ground grass and sprigs, some of them in front of the actors for depth
     for (let x = x0; x < x1; x += 14) {
-      const b = TA.BIOMES[this.biomeVis(x, 1)];
+      const b = TA.BIOMES[this.biomeAt(x)];
       const v = r(), p = pal(b), xx = x + r.int(0, 10);
       if (v < 0.2) add({ kind: 'decor', x: xx, spr: 'grass_' + p, flip: r() < 0.5, z: -1 });
       else if (v < 0.3 && !blocked(x, 6)) add({ kind: 'decor', x: xx, spr: `sprig_${p}${r.int(1, 3)}`, flip: r() < 0.5, z: 1 });
@@ -381,7 +366,7 @@ TA.World = class {
     }
     // choppable trees, and now and then a tall one standing in front
     for (let x = x0 + 8; x < x1; x += 18) {
-      const b = TA.BIOMES[this.biomeVis(x, 2)];
+      const b = TA.BIOMES[this.biomeAt(x)];
       const v = r();
       if (v < b.treeDensity * 0.55) {
         const xx = x + r.int(-4, 4);
@@ -390,12 +375,12 @@ TA.World = class {
         const big = TA.SPR[spr][4] >= 18 || TA.SPR[spr][3] >= 16;
         add({ kind: 'tree', x: xx, spr, flip: r() < 0.5, hp: big ? 5 : 3, maxHp: big ? 5 : 3, yieldWood: big ? [3, 5] : [2, 3], regrow: 3, z: 0 });
       } else if (v > 1 - b.treeDensity * 0.07 && !this.poiAt(x, 10)) {
-        add({ kind: 'decor', x: x + r.int(-4, 4), spr: r.pick(TA.TREE_SETS[r.weighted(b.trees)]), flip: r() < 0.5, front: true, dy: r.int(4, 7) });
+        add({ kind: 'decor', x: x + r.int(-4, 4), spr: r.pick(TA.TREE_SETS[r.weighted(b.trees)]), flip: r() < 0.5, front: true });
       }
     }
     // rocks (a few small ones sit in front)
     for (let x = x0 + 20; x < x1; x += 58) {
-      const b = TA.BIOMES[this.biomeVis(x, 3)];
+      const b = TA.BIOMES[this.biomeAt(x)];
       const v = r();
       if (v < b.rockDensity * 0.55) {
         const xx = x + r.int(-12, 12);
@@ -407,7 +392,7 @@ TA.World = class {
     }
     // forage bushes & mushrooms
     for (let x = x0 + 12; x < x1; x += 40) {
-      const b = TA.BIOMES[this.biomeVis(x, 4)];
+      const b = TA.BIOMES[this.biomeAt(x)];
       const v = r();
       if (v < b.bushDensity * 0.45) {
         const xx = x + r.int(-8, 8);
@@ -419,20 +404,20 @@ TA.World = class {
         if (!blocked(xx, 8)) add({ kind: 'mushroom', x: xx, regrow: 2, z: 1 });
       }
     }
-    // biome borders: a screen of trees in the foreground and a thicket behind
-    // hides the moment one land turns into the next
-    for (let i = this.regionOf(x0 - TA.BLEND); i <= this.regionOf(x1 + TA.BLEND) + 1; i++) {
-      const e = this.regionStart(i);
-      const a = this.biomeOfRegion(i - 1), b = this.biomeOfRegion(i);
-      if (a === b || TA.BIOMES[a].hidden !== TA.BIOMES[b].hidden) continue;
-      const vr = TA.rng(TA.hash(this.seed, i, 3131));
-      for (let k = -4; k <= 4; k++) {
-        const x = e + k * 21 + vr.int(-6, 6);
-        const side = TA.BIOMES[x < e ? a : b];
-        const set = TA.TREE_SETS[vr.weighted(side.trees)];
-        const front = { kind: 'decor', x, spr: vr.pick([set[1], set[2], set[2], set[4], set[6]]), flip: vr() < 0.5, front: true, dy: vr.int(4, 8) };
-        const back = { kind: 'decor', x: x + 10, spr: vr.pick([set[2], set[3], set[6]]), flip: vr() < 0.5, back: true, z: -2 };
-        for (const o of [front, back]) if (o.x >= x0 && o.x < x1) { o.id = `v${i}:${k}:${o === front ? 'f' : 'b'}`; take(o); }
+    // borders: a thicket three rows deep that hides whoever walks into it (the
+    // front row never turns see-through); a denser, brambly one around hidden biomes
+    for (const bd of this.bordersIn(x0 - 60, x1 + 60)) {
+      const vr = TA.rng(TA.hash(this.seed, bd.x, 3131)), n = bd.blocked ? 14 : 10;
+      for (let k = 0; k < n; k++) {
+        const x = bd.x - 54 + Math.round(k * 108 / (n - 1)) + vr.int(-3, 3);
+        const set = TA.TREE_SETS[vr.weighted(TA.BIOMES[x < bd.x ? bd.a : bd.b].trees)];
+        const pieces = [
+          { kind: 'decor', x, spr: vr.pick([set[1], set[2], set[2], set[6]]), flip: vr() < 0.5, front: true, screen: true },
+          { kind: 'decor', x: x + vr.int(-6, 6), spr: vr.pick([set[2], set[3], set[4]]), flip: vr() < 0.5, z: 2 },
+          { kind: 'decor', x: x + 6, spr: vr.pick([set[2], set[6]]), flip: vr() < 0.5, back: true, z: -2 },
+        ];
+        if (bd.blocked) pieces.push({ kind: 'decor', x: x + 4, spr: vr.pick(['bush_t', 'bush_o', 'bush_t2', 'bush_o2']), flip: vr() < 0.5, front: true, screen: true, dy: vr.int(2, 4) });
+        pieces.forEach((o, j) => { if (o.x >= x0 && o.x < x1) { o.id = `t${bd.x}:${k}:${j}`; take(o); } });
       }
     }
     // POI pieces that stand in this chunk

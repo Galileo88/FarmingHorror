@@ -8,9 +8,9 @@ TA.DAY_SECONDS = 420;          // real seconds per in-game day
 TA.START_HOUR = 7.5;
 TA.CHUNK = 256;                // world chunk width (px)
 TA.REGION = 2400;              // biome region width (px)
-TA.BLEND = 300;                // half width of the band where two biomes mix
+TA.BORDER_CLEAR = 300;         // towns keep this far from a region's edges
 TA.CLAIM_RADIUS = 176;         // land claimed by a banner, each side
-TA.CLIFF_W = 22;               // half width of the rock walls around hidden biomes
+TA.BORDER = 30;                // walkers stop this far from a biome border, inside its thicket
 TA.STALL_PREMIUM = 1.25;       // travellers pay this much over market price at your stall
 
 // Movement (px, px/s, px/s^2). Heights are measured up from the surface, or
@@ -165,7 +165,7 @@ TA.TRAVELLERS = ['trader', 'folk_blue', 'folk_green', 'folk_plum', 'elf', 'dwarf
 TA.FOLK_LINES = [
   'Lovely weather for it.', 'Mind the dark, friend. Things walk at night.', 'The old caves run under everything, they say.',
   'My gran swore she saw a portal humming in some ruins.', 'Travellers pay well for fresh produce.',
-  'There is a valley past the cliffs that no road reaches.', 'Fresh bread! ...oh, sold out.', 'Have you tried jumping? Builds character.',
+  'There is a valley past the thickets that no road reaches.', 'Fresh bread! ...oh, sold out.', 'Have you tried jumping? Builds character.',
   'Watchtowers hold more archers once you build them up.', 'The market stalls fill up on fair days.',
 ];
 
@@ -262,7 +262,8 @@ TA.BIOMES = {
     trees: { teal: 0.1, olive: 0.9 }, treeDensity: 0.2, rockDensity: 0.8, bushDensity: 0.1, gems: true,
     night: ['goblin', 'demon', 'skeleton'], day: ['goblin'], danger: 3, pois: ['warcamp', 'camp', 'bones', 'ruin'], cave: { bones: 3, caverns: 1 },
   },
-  // Hidden biomes: walled in by cliffs, reached only through the caves (or a lucky portal)
+  // Hidden biomes: closed in by thickets no one can push through, reached only
+  // through the caves (or a lucky portal)
   vale: {
     name: 'Lost Vale', tiles: 'elvishTiles', parallax: 'spikes_teal', color: '#a884f3', fertility: 1.7, grade: ['#a884f3', 0.18], hidden: true,
     trees: { teal: 0.9, olive: 0.1 }, treeDensity: 0.9, rockDensity: 0.3, bushDensity: 0.6, mushrooms: true, gems: true,
@@ -284,7 +285,6 @@ TA.CAVE_BIOMES = {
   fungal: { name: 'Fungal Grotto', pal: 2, color: '#1ebc73', bg: '#0f1a1d', rocks: 0.25, rich: 0.05, blooms: 0.6, shrooms: 0.4, mobs: ['zombie', 'ratfolk'] },
   bones: { name: 'Bone Pits', pal: 3, color: '#c8ac99', bg: '#1d1418', rocks: 0.4, rich: 0.1, blooms: 0.05, shrooms: 0.1, mobs: ['skeleton', 'zombie', 'bandit'] },
 };
-TA.CLIFF_PAL = 4;          // the cliffs' recolour of the cave tileset
 
 // Weather. tone: [multiply colour, strength], sat = how much colour drains away,
 // sky = grey wash over the sky, warm = golden soft-light

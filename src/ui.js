@@ -122,9 +122,9 @@ TA.UI = class {
       ctx.fillStyle = TA.BIOMES[g.world.biomeAt(x)].color;
       ctx.globalAlpha = 0.55; ctx.fillRect(toX(x), h - 7, 3, 4); ctx.globalAlpha = 1;
     }
-    // cliffs walling in hidden biomes
+    // thickets no one can cross, around hidden biomes
     ctx.fillStyle = '#c7dcd0';
-    for (const e of g.world.cliffsIn(ex[0], ex[1])) ctx.fillRect(toX(e), 1, 1, h - 2);
+    for (const bd of g.world.bordersIn(ex[0], ex[1])) if (bd.blocked) ctx.fillRect(toX(bd.x), 1, 1, h - 2);
     for (const d of Object.values(g.world.discovered)) {
       if (d.type === 'cave') { ctx.fillStyle = '#7f708a'; ctx.fillRect(toX(d.x) - 1, h - 4, 3, 3); continue; }
       if (d.type === 'portal') { ctx.fillStyle = '#8ff8e2'; ctx.fillRect(toX(d.x), h - 15, 1, 5); continue; }
@@ -136,8 +136,9 @@ TA.UI = class {
   }
 
   // ------------------------------------------------------------ modals
-  openModal(title, bodyHTML, onClick) {
-    this.modal = { onClick };
+  // keys: modal actions for the keyboard, e.g. { action: 'ok', menu: 'back' }
+  openModal(title, bodyHTML, onClick, keys) {
+    this.modal = { onClick, keys };
     const m = this.$('modal');
     m.innerHTML = `<div class="panel"><header><h2>${title}</h2><button class="x" data-act="close">✕</button></header><div class="body">${bodyHTML}</div></div>`;
     m.classList.add('open');
@@ -276,6 +277,23 @@ TA.UI = class {
     const onClick = act => { if (act === 'up') { g.upgradeTower(b); this.closeModal(); } };
     this.openModal('Watchtower', render(), onClick);
     this.paintThumbs();
+  }
+
+  // Walking into a border thicket: travel on, or turn back
+  openTravel(bd, dir) {
+    const g = this.game, from = TA.BIOMES[dir > 0 ? bd.a : bd.b], to = TA.BIOMES[dir > 0 ? bd.b : bd.a];
+    const onClick = act => {
+      this.closeModal();
+      if (act === 'ok') g.crossBorder(bd, dir); else g.turnBack(dir);
+    };
+    if (bd.blocked) {
+      const why = from.hidden ? 'This valley is closed in on every side.' : 'Whatever lies beyond is hidden from the road.';
+      this.openModal('The way is shut', `<p class="sub">The thicket here is too dense to push through. ${why} Perhaps there is a way beneath.</p>
+        <button class="wide" data-act="back">Go back</button>`, onClick, { action: 'back', menu: 'back' });
+      return;
+    }
+    this.openModal(`Travel to <span style="color:${to.color}">${to.name}</span>?`, `<p class="sub">The trees close in. Beyond them lies ${to.name}.</p>
+      <button class="wide" data-act="ok">OK</button><button class="wide" data-act="back">Go back</button>`, onClick, { action: 'ok', menu: 'back' });
   }
 
   openArmory() {

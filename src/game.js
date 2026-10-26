@@ -161,7 +161,8 @@ TA.Game = class {
       else if (type === 'banner') {
         if (this.claim) continue;
         if (this.world.poiAt(p.x, 40)) { ok = false; why = 'Too close to someone else\'s land'; }
-        else if (this.world.shaftAt(p.x, 60) || this.world.cliffsIn(p.x - 200, p.x + 200).length) { ok = false; why = 'The ground here is too rough'; }
+        else if (this.world.shaftAt(p.x, 60)) { ok = false; why = 'The ground here is too rough'; }
+        else if (this.world.bordersIn(p.x - 220, p.x + 220).length) { ok = false; why = 'Too close to the edge of these lands'; }
       } else {
         if (!this.claim) { ok = false; why = 'Plant a banner first'; }
         else if (!this.inClaim(p.x)) { ok = false; why = 'Stand on your land'; }
@@ -474,6 +475,29 @@ TA.Game = class {
     this.ui.toast('A loyal friend joins you!', 'good');
   }
 
+  // ------------------------------------------------------------ borders
+  // Walking into the thicket at a biome border asks whether to travel on. It
+  // asks once; walk back out of the thicket and in again to be asked again.
+  checkBorder() {
+    const p = this.player;
+    if (p.layer !== 's' || !p.alive || p.state !== 'free') return;
+    const bd = this.world.bordersIn(p.x - 40, p.x + 40).find(b => Math.abs(p.x - b.x) <= TA.BORDER + 8);
+    if (!bd) { this.borderAsked = null; return; }
+    if (this.borderAsked === bd.x || Math.abs(Math.abs(p.x - bd.x) - TA.BORDER) > 0.5) return;
+    this.borderAsked = bd.x;
+    this.ui.openTravel(bd, p.x < bd.x ? 1 : -1);
+  }
+  // Through the thicket, in a fade, out the far side
+  crossBorder(bd, dir) {
+    this.player.dir = dir;
+    this.travel('s', bd.x + dir * (TA.BORDER + 6), 0, null);
+  }
+  // Back out of the thicket
+  turnBack(dir) {
+    const p = this.player;
+    p.x -= dir * 10; p.dir = -dir;
+  }
+
   // ------------------------------------------------------------ portals
   // Fade out, move the player (and dog) to (x, y) far away, fade back in.
   travel(layer, x, y, msg) {
@@ -482,9 +506,9 @@ TA.Game = class {
     this.ui.fadeOut(() => {
       p.layer = layer; p.x = x; p.y = y; p.vy = 0; p.onGround = true; p.state = 'free'; p.action = null; p.invuln = 1;
       this.clearLayer();
-      if (this.dog) { this.dog.layer = layer; this.dog.x = x - 10; this.dog.y = y; this.dog.vy = 0; }
+      if (this.dog) { this.dog.layer = layer; this.dog.x = x - p.dir * 10; this.dog.y = y; this.dog.vy = 0; }
       this.camX = x; this.camY = layer === 'c' ? Math.min(0, y - 12) : 0;
-      this.lastCave = null; this.lastRegion = this.world.regionOf(x);
+      this.lastCave = null; // the region check in update() announces where you arrived
       if (msg) this.ui.toast(msg);
     });
   }
@@ -631,7 +655,7 @@ TA.Game = class {
     const cap = night ? 2 + danger : 1 + Math.floor(danger / 2);
     if (this.mobs.filter(m => m.nightSpawn && !m.dead).length >= cap) return;
     if (this.inClaim(x) || this.repelZones.some(L => Math.abs(x - L.x) < L.r)) return;
-    if (this.world.surfaceClamp(p.x, x) !== x) return; // nothing comes over the cliffs
+    if (this.world.surfaceClamp(p.x, x) !== x) return; // nothing comes through the thickets
     let type = list[Math.floor(Math.random() * list.length)];
     if (type === 'demon' && danger < 4) type = 'goblin';
     this.mobs.push(new TA.Mob(type, x, { night: true, level: danger }));
@@ -639,8 +663,13 @@ TA.Game = class {
 
   update(dt) {
     const inp = this.input, p = this.player;
-    // menus pause the world
-    if (this.ui.modal) { if (inp.hit('menu')) this.ui.closeModal(); return; }
+    // menus pause the world; some answer to the keyboard (E / Enter, Esc)
+    if (this.ui.modal) {
+      const keys = this.ui.modal.keys || {};
+      if (inp.hit('menu')) { if (keys.menu) this.ui.modal.onClick(keys.menu); else this.ui.closeModal(); }
+      else if (keys.action && inp.hit('action')) this.ui.modal.onClick(keys.action);
+      return;
+    }
     if (inp.hit('build')) this.ui.openBuild();
     if (inp.hit('seed')) this.cycleSeed();
     if (inp.hit('eat')) this.eat();
@@ -650,6 +679,7 @@ TA.Game = class {
     this.advanceTime(dt * 24 / TA.DAY_SECONDS);
     this.growCrops(dt);
     p.update(dt, this);
+    this.checkBorder();
     this.stream();
 
     // repel zones (light)

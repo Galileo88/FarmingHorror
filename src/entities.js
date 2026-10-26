@@ -6,7 +6,7 @@
 // ============================================================================
 window.TA = window.TA || {};
 
-// Shared movement: walk dx (blocked by cliffs, cave walls and low ceilings),
+// Shared movement: walk dx (blocked by border thickets, cave walls and low ceilings),
 // then gravity and landing on the ground, the cave floor or a one-way ledge.
 // Below the surface (y < 0) the earth is solid except for cave air and shafts.
 // Returns true if the horizontal move was blocked.
