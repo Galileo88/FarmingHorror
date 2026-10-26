@@ -1,0 +1,15 @@
+{
+  "name": "Farming Horror",
+  "short_name": "Farm Horror",
+  "description": "Grow by day. Survive the night.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0d0a12",
+  "theme_color": "#0d0a12",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

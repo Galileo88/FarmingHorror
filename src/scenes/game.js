@@ -369,7 +369,8 @@
         left: k.A.isDown || k.LEFT.isDown,
         right: k.D.isDown || k.RIGHT.isDown,
         up: k.W.isDown || k.UP.isDown,
-        down: k.S.isDown || k.DOWN.isDown
+        down: k.S.isDown || k.DOWN.isDown,
+        stick: FH.touch
       };
       if (this.phase === 'dawn' || this.phase === 'gameover') {
         this.player.sprite.setVelocity(0, 0);

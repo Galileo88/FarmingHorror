@@ -38,15 +38,21 @@
       FH.text(this, W / 2, 42, 'Horror', 0xd95763, { origin: 0.5, scale: 3 });
       FH.text(this, W / 2, 64, 'Grow by day. Survive the night.', 0xc8bcd8, { origin: 0.5 });
 
-      const lines = [
+      const lines = FH.isTouch ? [
+        'Left thumb: move         Right side: use tool',
+        'Tap the hotbar to pick a tool'
+      ] : [
         'WASD / arrows: move      Space: use tool',
         '1-8 or Q/E: pick tool    M: mute   P: pause'
       ];
       lines.forEach((l, i) => FH.text(this, W / 2, 140 + i * 9, l, 0x9a90a8, { origin: 0.5 }));
-      const start = FH.text(this, W / 2, 162, 'Press space to start', FH.COLOR.gold, { origin: 0.5 });
+      const start = FH.text(this, W / 2, 162, FH.isTouch ? 'Tap to start' : 'Press space to start', FH.COLOR.gold, { origin: 0.5 });
       this.tweens.add({ targets: [start.main, start.shadow], alpha: 0.25, duration: 600, yoyo: true, repeat: -1 });
 
+      let started = false;
       const go = () => {
+        if (started) return;
+        started = true;
         FH.Audio.unlock();
         FH.Audio.play('bell');
         this.cameras.main.fadeOut(400, 13, 10, 18);
@@ -54,7 +60,11 @@
       };
       this.input.keyboard.once('keydown-SPACE', go);
       this.input.keyboard.once('keydown-ENTER', go);
-      this.input.once('pointerdown', go);
+      // pointerup (not down) so the browser allows fullscreen on phones
+      this.input.once('pointerup', (p) => {
+        if (p.wasTouch) FH.goFullscreen(this);
+        go();
+      });
     }
 
     update(time) {
