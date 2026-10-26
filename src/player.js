@@ -53,6 +53,15 @@
         if (input.up) vy -= 1;
         if (input.down) vy += 1;
         if (vx && vy) { vx *= 0.7071; vy *= 0.7071; }
+        // Analog thumb stick (touch screens)
+        if (!vx && !vy && input.stick) {
+          const m = Math.hypot(input.stick.x, input.stick.y);
+          if (m > 0.25) {
+            const speed = Math.min(1, m * 1.3);
+            vx = (input.stick.x / m) * speed;
+            vy = (input.stick.y / m) * speed;
+          }
+        }
         s.setVelocity(vx * C.playerSpeed, vy * C.playerSpeed);
 
         if (vx || vy) {

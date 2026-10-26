@@ -32,6 +32,17 @@ Then open http://localhost:8000.
 | P / Esc | Pause |
 | M | Mute |
 
+### On a phone or tablet (landscape)
+
+- **Left thumb:** touch anywhere on the left half of the screen and drag to move.
+- **Right side:** tap to use the selected tool. The round button shows which tool that is.
+- **Hotbar:** tap a slot to pick a tool.
+- **II button:** pause.
+
+If you hold the phone upright, the game asks you to turn it sideways. On Android, the first tap also goes fullscreen.
+
+For the best experience on an iPhone, open the game in Safari, tap **Share → Add to Home Screen**, and launch it from the icon. It then runs fullscreen with no browser bars.
+
 ## How a day works
 
 1. **Day (6 AM to 6 PM).** Use the **hoe** on grass in the middle field. Plant **carrot** (fast, cheap) or **pumpkin** (slow, worth a lot) seeds, then **water** them. Crops only grow on watered soil, and the soil dries out every night.
@@ -58,6 +69,7 @@ src/palette.js      the shared color palette
 src/art.js          every sprite, drawn as text (one letter = one pixel)
 src/font.js         tiny 3x5 pixel font
 src/audio.js        synthesized sound effects + generative music
+src/touch.js        on-screen thumb stick + action button for phones
 src/field.js        ground tiles, crops, placed items
 src/player.js       the farmer
 src/crow.js         crow AI (approach, peck, flee)
@@ -89,4 +101,3 @@ CC0 packs (Kenney, 0x72, Ninja Adventure) are safe to commit. Put those in `asse
 - More enemies: fast "runner" zombies, a boss on blood-moon nights
 - More crops and seasons
 - Save and load with localStorage
-- Touch controls for phones

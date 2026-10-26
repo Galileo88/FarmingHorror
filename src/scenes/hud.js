@@ -35,6 +35,9 @@
       this.toolLabel = FH.text(this, W / 2, y0 - 9, '', FH.COLOR.text, { origin: 0.5 });
       this.toolLabelTimer = 0;
 
+      // On-screen stick + action button for phones (hidden on desktop)
+      this.touchUI = FH.Touch.attach(this);
+
       // Messages
       this.toastText = FH.text(this, W / 2, y0 - 19, '', FH.COLOR.text, { origin: 0.5 });
       this.toastTimer = 0;
@@ -44,7 +47,7 @@
 
       // Overlays
       this.overlay = this.add.container(0, 0).setVisible(false).setDepth(100);
-      this.pauseText = FH.text(this, W / 2, H / 2 - 4, 'Paused - press P to resume', FH.COLOR.text, { origin: 0.5 }).setVisible(false);
+      this.pauseText = FH.text(this, W / 2, H / 2 - 4, FH.isTouch ? 'Paused - tap to resume' : 'Paused - press P to resume', FH.COLOR.text, { origin: 0.5 }).setVisible(false);
 
       g.events.on('tool', this.onTool, this);
       g.events.on('coins', this.onCoins, this);
@@ -64,6 +67,7 @@
 
     onTool(i, quiet) {
       this.slots.forEach((s, j) => s.setFrame(j === i ? 1 : 0));
+      if (this.touchUI) this.touchUI.setTool(i);
       const t = FH.TOOLS[i];
       this.toolLabel.setText(`${t.name}${t.cost ? ` (${t.cost})` : ''}: ${t.hint}`).setAlpha(1);
       this.toolLabelTimer = quiet ? 4 : 2.5;
@@ -117,7 +121,7 @@
       lines.push([`Eaten by crows: ${s.crowEaten}`, s.crowEaten ? FH.COLOR.red : FH.COLOR.text]);
       lines.push([`Eaten by zombies: ${s.zombieEaten}`, s.zombieEaten ? FH.COLOR.red : FH.COLOR.text]);
       lines.push([`Zombies put down: ${s.zombiesKilled}   Crows: ${s.crowsKilled}`]);
-      this.panel(lines, won ? 'Press space to keep farming (endless)' : `Press space to start day ${g.day + 1}`);
+      this.panel(lines, won ? FH.prompt('keep farming (endless)') : FH.prompt(`start day ${g.day + 1}`));
     }
 
     showGameOver({ day }) {
@@ -125,7 +129,7 @@
         this.panel([
           ['The dead took the farm', FH.COLOR.red, 1],
           [`You lasted until night ${day}.`, 0xc8bcd8]
-        ], 'Press space to try again');
+        ], FH.prompt('try again'));
       });
     }
 
