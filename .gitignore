@@ -1,0 +1,12 @@
+# Asset packs whose licenses forbid redistribution (Sunnyside, Sprout Lands, etc.)
+assets/licensed/
+
+# OS / editor clutter
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# If you ever add a build step
+node_modules/
+dist/
