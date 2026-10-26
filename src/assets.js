@@ -13,12 +13,21 @@ TA.px = v => Math.round(v * TA.PX) / TA.PX;
 TA.loadImages = function (onProgress) {
   const entries = Object.entries(TA.IMAGES);
   let done = 0;
-  return Promise.all(entries.map(([key, src]) => new Promise(res => {
+  const load = () => Promise.all(entries.map(([key, src]) => new Promise(res => {
     const im = new Image();
     im.onload = () => { TA.img[key] = im; onProgress && onProgress(++done / entries.length); res(); };
     im.onerror = () => { console.warn('missing image', src); onProgress && onProgress(++done / entries.length); res(); };
-    im.src = src;
+    im.src = (TA.IMAGE_DATA && TA.IMAGE_DATA[src]) || src;
   }))).then(TA.prepareImages);
+  if (location.protocol !== 'file:') return load();
+  // Opened from disk: every file:// image counts as cross-origin and would taint the
+  // canvas, so take the images from assets/images.js as data URLs instead.
+  return new Promise(res => {
+    const s = document.createElement('script');
+    s.src = 'assets/images.js';
+    s.onload = s.onerror = res;
+    document.head.appendChild(s);
+  }).then(load);
 };
 
 // After loading: measure sprites and make darkened copies.
@@ -28,7 +37,12 @@ TA.loadImages = function (onProgress) {
 TA.FEET = {}; TA.BTRIM = {}; TA.imgDark = {};
 TA.prepareImages = function () {
   const cv = document.createElement('canvas'), cx = cv.getContext('2d', { willReadFrequently: true });
-  const pixels = im => { cv.width = im.width; cv.height = im.height; cx.clearRect(0, 0, im.width, im.height); cx.drawImage(im, 0, 0); return cx.getImageData(0, 0, im.width, im.height).data; };
+  // Reading pixels fails on a tainted canvas: then everything counts as opaque (no trimming)
+  const pixels = im => {
+    cv.width = im.width; cv.height = im.height; cx.clearRect(0, 0, im.width, im.height); cx.drawImage(im, 0, 0);
+    try { return cx.getImageData(0, 0, im.width, im.height).data; }
+    catch (e) { console.warn('cannot read image pixels; serve the folder over http'); return new Uint8ClampedArray(im.width * im.height * 4).fill(255); }
+  };
   for (const [key, sh] of Object.entries(TA.SHEETS)) {
     const im = TA.img[sh.img]; if (!im) continue;
     const d = pixels(im), feet = {};

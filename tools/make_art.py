@@ -206,6 +206,8 @@ def main(out_dir):
     bottom_center(sign, post, 0, 0)
     sign.save(os.path.join(art, 'sign.png'))
     print('generated art in assets/art/')
+    import embed_images
+    embed_images.main(out_dir)
 
 
 if __name__ == '__main__':
