@@ -362,7 +362,7 @@ TA.World = class {
       const v = r(), p = pal(b), xx = x + r.int(0, 10);
       if (v < 0.2) add({ kind: 'decor', x: xx, spr: 'grass_' + p, flip: r() < 0.5, z: -1 });
       else if (v < 0.3 && !blocked(x, 6)) add({ kind: 'decor', x: xx, spr: `sprig_${p}${r.int(1, 3)}`, flip: r() < 0.5, z: 1 });
-      else if (v < 0.4 && !this.poiAt(x, 0)) add({ kind: 'decor', x: xx, spr: r() < 0.6 ? 'grass_' + p : `sprig_${p}${r.int(1, 3)}`, flip: r() < 0.5, front: true, dy: r.int(3, 6) });
+      else if (v < 0.4 && !this.poiAt(x, 0)) add({ kind: 'decor', x: xx, spr: r() < 0.6 ? 'grass_' + p : `sprig_${p}${r.int(1, 3)}`, flip: r() < 0.5, front: true });
     }
     // choppable trees, and now and then a tall one standing in front
     for (let x = x0 + 8; x < x1; x += 18) {
@@ -388,7 +388,7 @@ TA.World = class {
         const spr = r.pick(['rock_a', 'rock_b', 'rock_c', 'rock_d', 'rock_a']);
         const hp = spr === 'rock_a' ? 5 : 3;
         add({ kind: 'rock', x: xx, spr, hp, maxHp: hp, gems: !!b.gems, rich: !!b.richRocks, regrow: 4, z: 1 });
-      } else if (v > 0.93) add({ kind: 'decor', x: x + r.int(-12, 12), spr: r.pick(['rock_b', 'rock_c', 'rock_d']), front: true, dy: r.int(4, 6) });
+      } else if (v > 0.93) add({ kind: 'decor', x: x + r.int(-12, 12), spr: r.pick(['rock_b', 'rock_c', 'rock_d']), front: true });
     }
     // forage bushes & mushrooms
     for (let x = x0 + 12; x < x1; x += 40) {
@@ -416,7 +416,7 @@ TA.World = class {
           { kind: 'decor', x: x + vr.int(-6, 6), spr: vr.pick([set[2], set[3], set[4]]), flip: vr() < 0.5, z: 2 },
           { kind: 'decor', x: x + 6, spr: vr.pick([set[2], set[6]]), flip: vr() < 0.5, back: true, z: -2 },
         ];
-        if (bd.blocked) pieces.push({ kind: 'decor', x: x + 4, spr: vr.pick(['bush_t', 'bush_o', 'bush_t2', 'bush_o2']), flip: vr() < 0.5, front: true, screen: true, dy: vr.int(2, 4) });
+        if (bd.blocked) pieces.push({ kind: 'decor', x: x + 4, spr: vr.pick(['bush_t', 'bush_o', 'bush_t2', 'bush_o2']), flip: vr() < 0.5, front: true, screen: true });
         pieces.forEach((o, j) => { if (o.x >= x0 && o.x < x1) { o.id = `t${bd.x}:${k}:${j}`; take(o); } });
       }
     }
@@ -471,7 +471,7 @@ TA.World = class {
       else if (v < (cb.rocks + cb.blooms) * 0.35) add({ kind: 'glow', x: xx, y, layer: 'c', spr: r.pick(['bloom_a', 'bloom_b', 'bloom_c', 'bloom_d', 'bloom_e', 'bloom_f']), flip: r() < 0.5, regrow: 2, light: 14 });
       else if (v < (cb.rocks + cb.blooms + cb.shrooms) * 0.35) add({ kind: 'mushroom', x: xx, y, layer: 'c', regrow: 2 });
       else if (v < 0.72) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(tufts), flip: r() < 0.5, back: true });
-      else if (v < 0.8) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(tufts.concat(['bloom_g'])), flip: r() < 0.5, front: true, dy: r.int(2, 4) });
+      else if (v < 0.8) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(tufts.concat(['bloom_g'])), flip: r() < 0.5, front: true });
       else if (v < 0.84 && cb === TA.CAVE_BIOMES.bones) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(['g_ribs3', 'g_tusk', 'g_tusk2']) });
     }
     // roots hanging from the roof (and from the underside of the ground in shafts)
@@ -536,7 +536,7 @@ TA.POI_DEFS = {
       // fields on the west edge, with a farmer at work
       for (let k = 0; k < 5; k++) add({ kind: 'field', x: L + 24 + k * 16, crop: r.pick(['wheat', 'carrot', 'pumpkin']), stage: r.int(1, 4) });
       add({ kind: 'folk', x: L + 48, sheet: 'farmer2', role: 'work', anim: r() < 0.5 ? 'work' : 'water', range: [L + 24, L + 88] });
-      for (let k = 0; k < 4; k++) add({ kind: 'struct', spr: 'k_fence', x: L + 28 + k * 24, front: true, dy: 5 });
+      for (let k = 0; k < 4; k++) add({ kind: 'struct', spr: 'k_fence', x: L + 28 + k * 24, front: true });
       // main street
       const main = TA.street(add, r, L + 112, R - 70, () => r() < 0.12 ? null : { ...pickKey(r, homes)() }, { z: -1 }, [6, 16]);
       // a market and a campfire at the heart of it
@@ -549,8 +549,8 @@ TA.POI_DEFS = {
       add({ kind: 'decor', x: R - 18, spr: 'tree_o_tall', z: -1 });
       add({ kind: 'folk', x: R - 54, sheet: 'lumber2', role: 'work', anim: 'work', range: [R - 60, R - 50], face: 1 });
       // fences, shrubs and a cottage close to the viewer
-      for (let x = L + 120; x < R - 60; x += r.int(40, 90)) add({ kind: 'struct', spr: r.pick(['k_fence', 'bush_t', 'bush_o', 'k_fence']), x, front: true, dy: r.int(4, 6) });
-      if (r() < 0.6) add({ kind: 'struct', spr: r.pick(['k_shed', 'k_cottage']), x: p.x - 90, front: true, dy: 3 });
+      for (let x = L + 120; x < R - 60; x += r.int(40, 90)) add({ kind: 'struct', spr: r.pick(['k_fence', 'bush_t', 'bush_o', 'k_fence']), x, front: true });
+      if (r() < 0.6) add({ kind: 'struct', spr: r.pick(['k_shed', 'k_cottage']), x: p.x - 90, front: true });
       TA.addFolk(add, r, p, r.int(3, 5), { doors: main.map(o => o.x) });
       if (r() < 0.5) add({ kind: 'dog', x: p.x - 60, dog: r.pick(['beagle', 'black', 'white', 'shepherd']) });
     },
@@ -569,7 +569,7 @@ TA.POI_DEFS = {
       add({ kind: 'campfire', x: p.x, z: 1, light: 60 });
       add({ kind: 'npc', x: p.x + r.int(-40, 40), npc: 'trader' });
       add({ kind: 'chest', x: p.x + 150, tier: 2 });
-      for (let x = L + 50; x < R - 50; x += r.int(50, 110)) { const spr = r.pick(['k_fence', 'bush_t', 'k_pergola', 'bush_o2', 'k_shed']); add({ kind: 'struct', spr, x, front: true, dy: spr === 'k_shed' ? 3 : r.int(4, 6) }); }
+      for (let x = L + 50; x < R - 50; x += r.int(50, 110)) { const spr = r.pick(['k_fence', 'bush_t', 'k_pergola', 'bush_o2', 'k_shed']); add({ kind: 'struct', spr, x, front: true }); }
       TA.addFolk(add, r, p, r.int(6, 9), { doors: main.map(o => o.x), guards: 2 });
       if (r() < 0.35) add({ kind: 'dog', x: p.x - 60, dog: r.pick(['beagle', 'black', 'white', 'shepherd']) });
     },
@@ -598,7 +598,7 @@ TA.POI_DEFS = {
       add({ kind: 'npc', x: p.x + r.int(200, 300), npc: r() < 0.5 ? 'dwarf' : 'elf' });
       add({ kind: 'chest', x: p.x - 260, tier: 2 });
       add({ kind: 'chest', x: p.x + 380, tier: 3 });
-      for (let x = L + 60; x < R - 60; x += r.int(40, 90)) { const spr = r.pick(['k_fence', 'bush_t', 'k_pergola', 'k_vines', 'k_shed', 'k_house']); add({ kind: 'struct', spr, x, front: true, dy: spr.startsWith('k_') && spr !== 'k_fence' ? 3 : r.int(4, 7) }); }
+      for (let x = L + 60; x < R - 60; x += r.int(40, 90)) { const spr = r.pick(['k_fence', 'bush_t', 'k_pergola', 'k_vines', 'k_shed', 'k_house']); add({ kind: 'struct', spr, x, front: true }); }
       TA.addFolk(add, r, p, r.int(12, 16), { doors: main.map(o => o.x), guards: r.int(3, 4) });
       if (r() < 0.5) add({ kind: 'dog', x: p.x + 90, dog: r.pick(['beagle', 'black', 'white', 'shepherd']) });
     },
@@ -614,7 +614,7 @@ TA.POI_DEFS = {
       add({ kind: 'struct', bld: 'ruin2', x: p.x + 34, z: -1 });
       add({ kind: 'struct', bld: 'ruin1', x: R - 30, z: -1 });
       add({ kind: 'struct', spr: 'k_arch', x: p.x + 100, z: -1 });
-      for (let k = 0; k < 4; k++) add({ kind: 'decor', spr: r.pick(['rock_b', 'rock_c', 'rock_d']), x: L + 20 + r.int(0, p.w - 40), front: true, dy: r.int(3, 6) });
+      for (let k = 0; k < 4; k++) add({ kind: 'decor', spr: r.pick(['rock_b', 'rock_c', 'rock_d']), x: L + 20 + r.int(0, p.w - 40), front: true });
       add({ kind: 'chest', x: p.x - 12, tier: 1 });
       if (r() < 0.5) add({ kind: 'chest', x: R - 50, tier: 2 });
       add({ kind: 'mobs', x: p.x, mobs: Array.from({ length: r.int(0, 3) }, () => 'skeleton') });
@@ -633,8 +633,8 @@ TA.POI_DEFS = {
       add({ kind: 'struct', spr: 'g_platform', x: R - 34, z: -1 });
       add({ kind: 'campfire', x: p.x - 2, z: 1, light: 50 });
       add({ kind: 'chest', x: p.x + 24, tier: 2 });
-      add({ kind: 'struct', spr: 'g_tusk', x: L + 14, front: true, dy: 4 });
-      add({ kind: 'struct', spr: 'g_tusk2', x: R - 12, front: true, dy: 4 });
+      add({ kind: 'struct', spr: 'g_tusk', x: L + 14, front: true });
+      add({ kind: 'struct', spr: 'g_tusk2', x: R - 12, front: true });
       add({ kind: 'mobs', x: p.x, mobs: Array.from({ length: r.int(2, 4) }, () => 'goblin') });
     },
   },
@@ -655,7 +655,7 @@ TA.POI_DEFS = {
       add({ kind: 'campfire', x: p.x + 14, z: 1, light: 56 });
       add({ kind: 'campfire', x: R - 90, z: 1, light: 50 });
       add({ kind: 'chest', x: p.x + 58, tier: 3 });
-      for (let k = 0; k < 3; k++) add({ kind: 'struct', spr: r.pick(['g_tusk', 'g_tusk2', 'g_ribs3']), x: L + 40 + k * 120 + r.int(0, 30), front: true, dy: 4 });
+      for (let k = 0; k < 3; k++) add({ kind: 'struct', spr: r.pick(['g_tusk', 'g_tusk2', 'g_ribs3']), x: L + 40 + k * 120 + r.int(0, 30), front: true });
       add({ kind: 'mobs', x: p.x, mobs: ['goblin_chief', ...Array.from({ length: r.int(3, 5) }, () => 'goblin')] });
     },
   },
@@ -667,7 +667,7 @@ TA.POI_DEFS = {
       add({ kind: 'struct', spr: r.pick(['g_skull', 'g_skull2']), x: p.x - 4, z: -1 });
       add({ kind: 'struct', spr: 'g_bonearch', x: p.x + 30, z: -1 });
       add({ kind: 'struct', spr: 'g_tusk', x: p.x + 50, z: -1 });
-      add({ kind: 'struct', spr: 'g_ribs3', x: p.x + 76, front: true, dy: 5 });
+      add({ kind: 'struct', spr: 'g_ribs3', x: p.x + 76, front: true });
       add({ kind: 'rock', x: p.x + 14, spr: 'rock_a', hp: 6, maxHp: 6, gems: true, rich: true, regrow: 6, z: 1 });
       add({ kind: 'mobs', x: p.x, mobs: ['skeleton', 'skeleton', ...(r() < 0.5 ? ['skeleton'] : [])], nightOnly: true });
     },
@@ -684,7 +684,7 @@ TA.POI_DEFS = {
       add({ kind: 'struct', spr: r.pick(['e_totem', 'e_totem2', 'e_pillar']), x: p.x + 66, z: -1 });
       add({ kind: 'struct', spr: 'e_house', x: p.x + 100, z: -1 });
       add({ kind: 'struct', spr: r.pick(['e_ped1', 'e_ped2', 'e_ped3']), x: p.x + 130, z: -1, light: 20 });
-      add({ kind: 'struct', spr: 'e_hedge', x: p.x - 40, front: true, dy: 5 });
+      add({ kind: 'struct', spr: 'e_hedge', x: p.x - 40, front: true });
       add({ kind: 'npc', x: p.x, npc: 'elf' });
       TA.addFolk(add, r, p, r.int(2, 3), { sheets: ['elf', 'wizard'] });
       add({ kind: 'wildcrop', x: p.x + 48, crop: 'moonflower', regrow: 3, z: 1 });
@@ -703,7 +703,7 @@ TA.POI_DEFS = {
       add({ kind: 'rock', x: p.x - 84, spr: 'rock_a', hp: 6, maxHp: 6, gems: true, rich: true, regrow: 5, z: 1 });
       add({ kind: 'folk', x: p.x - 30, sheet: 'miner2', role: 'work', anim: 'work', range: [p.x - 34, p.x - 26], face: -1 });
       add({ kind: 'folk', x: p.x + 50, sheet: 'miner2', role: 'work', anim: 'work', range: [p.x + 46, p.x + 54], face: 1 });
-      add({ kind: 'struct', spr: 'rock_a', x: p.x - 24, front: true, dy: 5 });
+      add({ kind: 'struct', spr: 'rock_a', x: p.x - 24, front: true });
     },
   },
   shrine: {
@@ -715,7 +715,7 @@ TA.POI_DEFS = {
       add({ kind: 'struct', spr: 'e_temple', x: p.x - 40, z: -1, light: 24 });
       add({ kind: 'struct', spr: 'e_crystalhouse', x: p.x + 40, z: -1, light: 24 });
       add({ kind: 'struct', spr: 'e_pillar', x: R - 30, z: -1 });
-      add({ kind: 'struct', spr: 'e_arches', x: p.x - 90, front: true, dy: 5 });
+      add({ kind: 'struct', spr: 'e_arches', x: p.x - 90, front: true });
       add({ kind: 'npc', x: p.x, npc: 'hermit' });
       add({ kind: 'chest', x: p.x + 80, tier: 3 });
       for (let k = 0; k < 4; k++) add({ kind: 'wildcrop', x: L + 60 + k * 50, crop: 'moonflower', regrow: 3, z: 1 });

@@ -210,7 +210,7 @@ TA.Renderer = class {
     for (const b of game.buildings) this.drawBuilding(ctx, game, b, sx(b.x), t, 1);
     const ps = sx(p.x), py = this.Y(p.y);
     for (const o of objs) if (o.front) {
-      const x = sx(o.x), by = this.Y(o.y || 0) + (o.dy || 0), w = TA.objW(o), h = TA.objH(o);
+      const x = sx(o.x), by = this.Y(o.y || 0), w = TA.objW(o), h = TA.objH(o);
       // see-through when it would hide the player (except a border thicket, whose job that is)
       const hides = !o.screen && h > 9 && Math.abs(x - ps) < w / 2 + 3 && py > by - h - 2;
       this.drawObj(ctx, game, o, x, by, t, { alpha: hides ? 0.45 : 1 });
