@@ -13,7 +13,7 @@ python -m http.server 8000
 # then open http://localhost:8000
 ```
 
-Double-clicking `index.html` also works in most browsers. The game saves to the browser's local storage.
+Double-clicking `index.html` also works: opened from disk, the game takes its images from `assets/images.js`, where they are stored as data URLs, because browsers won't let a page read the pixels of `file://` images. `tools/make_art.py` regenerates that file, so rerun it after changing any PNG. The game saves to the browser's local storage.
 
 ## Controls
 
@@ -61,6 +61,7 @@ Double-clicking `index.html` also works in most browsers. The game saves to the 
 | `src/ui.js` | DOM HUD, prompts, menus, strip map, touch controls |
 | `tools/build_assets.py` | Copies the sheets the game uses out of `zips/` into `assets/` with clean names (the cave tileset is a RAR, so that step needs `bsdtar` from libarchive-tools) |
 | `tools/make_art.py` | Original crop, soil, icon, campfire and chest pixel art (the packs don't include these), and a recolour of the cave tileset for each cave biome |
+| `tools/embed_images.py` | Writes every PNG into `assets/images.js` as a data URL, for opening the game from disk (`make_art.py` runs it) |
 
 The canvas is screen-sized. The world draws in world pixels through a whole-number zoom (about 92 world pixels tall), and positions snap to screen pixels rather than whole world pixels, so moving sprites glide instead of jumping one fat pixel at a time.
 
