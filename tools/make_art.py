@@ -109,12 +109,45 @@ ICONS = {
     'banner': ["kee.....", "keeeE...", "keeE....", "kE......", "k.......", "k.......", "k.......", "........"],
     'sun': ["...y....", ".y.y.y..", "..YYY...", "yYyyYy..", "..YYY...", ".y.y.y..", "...y....", "........"],
     'moon': ["...HH...", "..HH....", ".HH.....", ".HH.....", ".HH.....", "..HH....", "...HH...", "........"],
+    'dirt': ["........", "...kk...", "..kjjk..", ".kjKjjk.", ".jjjjKj.", "kjKjjjjk", ".kkkkkk.", "........"],
 }
+
+
+# ---------------------------------------------------------------- caves
+# The cave tileset (assets/cave/tileset.png) is two colours. Each cave biome gets
+# a recoloured copy, stacked in assets/art/cave_tiles.png in TA.CAVE_BIOMES pal order.
+CAVE_SRC = [(39, 39, 68), (73, 77, 126)]  # dark interior, rock rim
+CAVE_RECOLOURS = [
+    ('caverns', None),
+    ('crystal', [(45, 30, 70), (110, 72, 150)]),
+    ('fungal', [(24, 44, 48), (44, 98, 92)]),
+    ('bones', [(48, 34, 40), (118, 82, 74)]),
+    ('dirt', [(49, 36, 45), (128, 92, 74)]),  # dirt blocks, wherever they are
+]
+
+
+def cave_tiles(out_dir):
+    src = os.path.join(out_dir, 'cave', 'tileset.png')
+    if not os.path.exists(src):
+        print('  no cave tileset; run build_assets.py'); return
+    base = Image.open(src).convert('RGBA')
+    sheet = Image.new('RGBA', (base.width, base.height * len(CAVE_RECOLOURS)), (0, 0, 0, 0))
+    for row, (_, cols) in enumerate(CAVE_RECOLOURS):
+        im = base.copy(); px = im.load()
+        if cols:
+            for y in range(im.height):
+                for x in range(im.width):
+                    r, g, b, a = px[x, y]
+                    if a and (r, g, b) in CAVE_SRC: px[x, y] = cols[CAVE_SRC.index((r, g, b))] + (a,)
+        sheet.paste(im, (0, row * base.height))
+    sheet.save(os.path.join(out_dir, 'art', 'cave_tiles.png'))
 
 
 def main(out_dir):
     art = os.path.join(out_dir, 'art')
     os.makedirs(art, exist_ok=True)
+
+    cave_tiles(out_dir)
 
     # crops.png: rows = crop types (CROP_ORDER), cols = stage 0..4 (16x16)
     img = Image.new('RGBA', (16 * 5, 16 * len(CROP_ORDER)), (0, 0, 0, 0))

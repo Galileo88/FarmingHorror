@@ -19,6 +19,9 @@ TT2 = "02 TINY THRONES - Goblin Camp.zip"
 TT3 = "03 - Tiny Thrones - Parallax Pack.zip"
 TT4 = "04 TINY THRONES - Elvish City.zip"
 VIL = "tiny-clans-villagers-workers-all.zip"
+CAVE = "Cave Tileset.rar"
+# from the cave tileset archive (its slime sprites are not used)
+CAVE_FILES = {"cave/tileset.png": "Tileset/tileset.png", "cave/vegetation.png": "Tileset/vegetation.png"}
 
 FILES = {
     # tilesets
@@ -69,6 +72,13 @@ FILES = {
     "units/dwarf.png": ("tiny_clans_dwarves.zip", "tiny_clans_dwarf_axe.png"),
     "units/guard.png": ("tiny-clans-humans.zip", "tiny_clans_-_human_swordsman.png"),
     "units/archer.png": ("tiny-clans-humans.zip", "tiny_clans_-_human_archer.png"),
+    "units/spearman.png": ("tiny-clans-humans.zip", "tiny_clans_-_human_spearman.png"),
+    "units/wizard.png": ("tiny-clans-humans.zip", "tiny_clans_-_human_wizard.png"),
+    # townsfolk at work (32x16 cells)
+    "units/smith.png": (VIL, "tiny_clans_villagers_blacksmith_2.png"),
+    "units/farmer2.png": (VIL, "tiny_clans_villagers_farmer_2.png"),
+    "units/lumber2.png": (VIL, "tiny_clans_villagers_lumberjack_2.png"),
+    "units/miner2.png": (VIL, "tiny_clans_villagers_miner_2.png"),
     # dogs (16x16 cells)
     "units/dog_beagle.png": ("TinyBit Dogs Pack.zip", "TinyBit Dogs Pack/dog_beagle.png"),
     "units/dog_black.png": ("TinyBit Dogs Pack.zip", "TinyBit Dogs Pack/dog_black.png"),
@@ -114,6 +124,47 @@ def copy(zipname, inner, dest):
     return True
 
 
+# Townsfolk: the worker sheet with its brown tunic swapped for other cloth colours
+FOLK_TUNICS = {
+    "folk_blue": [(48, 64, 112), (61, 80, 130), (29, 38, 70)],
+    "folk_green": [(35, 90, 60), (45, 110, 72), (22, 55, 38)],
+    "folk_red": [(120, 40, 45), (145, 52, 55), (75, 25, 30)],
+    "folk_plum": [(95, 55, 105), (115, 70, 125), (60, 35, 66)],
+}
+TUNIC_SRC = [(81, 56, 27), (93, 65, 34), (50, 34, 15)]
+
+
+def recolor_folk():
+    from PIL import Image
+    src = os.path.join(OUT, "units/worker2.png")
+    if not os.path.exists(src):
+        return
+    base = Image.open(src).convert("RGBA")
+    for name, cols in FOLK_TUNICS.items():
+        im = base.copy(); px = im.load()
+        for y in range(im.height):
+            for x in range(im.width):
+                r, g, b, a = px[x, y]
+                if a and (r, g, b) in TUNIC_SRC:
+                    px[x, y] = cols[TUNIC_SRC.index((r, g, b))] + (a,)
+        im.save(os.path.join(OUT, f"units/{name}.png"))
+
+
+def copy_rar(rarname, files):
+    """zipfile can't read RAR, so use bsdtar (libarchive-tools) when it's there."""
+    import subprocess, shutil as sh, tempfile
+    rp = os.path.join(ZIPS, rarname)
+    if not os.path.exists(rp) or not sh.which("bsdtar"):
+        print("  skipped", rarname, "(missing archive or bsdtar)"); return 0
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["bsdtar", "-xf", rp, "-C", tmp, *files.values()], check=True)
+        for dest, inner in files.items():
+            path = os.path.join(OUT, dest)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            sh.copyfile(os.path.join(tmp, inner), path)
+    return len(files)
+
+
 def main():
     n = 0
     for dest, (zipname, inner) in FILES.items():
@@ -121,7 +172,9 @@ def main():
     for name, (folder, layers) in PARALLAX.items():
         for i, layer in enumerate(layers):
             n += copy(TT3, f"Parallax PNG/{folder}/{layer}", f"parallax/{name}_{i}.png")
+    n += copy_rar(CAVE, CAVE_FILES)
     print(f"copied {n} files into assets/")
+    recolor_folk()
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import make_art
     make_art.main(OUT)

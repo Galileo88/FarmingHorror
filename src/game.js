@@ -12,10 +12,17 @@ TA.Building = class {
     this.width = def ? def.width : 32;
     this.isWall = d.type === 'wall';
     this.maxHp = this.isWall ? 30 : 0; this.hp = d.hp ?? this.maxHp;
-    this.side = d.side || 0; this.cool = 0;
+    this.side = d.side || 0;
+    if (d.type === 'watchtower') { this.level = d.level || 1; this.archers = []; this.syncArchers(); }
+    if (d.type === 'market') { this.stock = d.stock || {}; this.till = d.till || 0; }
   }
   get frame() { return Math.min(17, 1 + Math.floor(this.t * 10)); }
   get built() { return this.t * 10 >= 16; }
+  // one archer per window, each with their own cooldown
+  syncArchers() {
+    while (this.archers.length < TA.TOWER_LEVELS[this.level].archers)
+      this.archers.push({ cool: 0.5 + this.archers.length * 0.55, win: TA.TOWER_WINDOWS[this.archers.length], shot: 9, dir: 1 });
+  }
   damage(dmg, game) {
     this.hp -= dmg; game.fx.burst(this.x, 10, '#ad8266', 4); game.shake = 1.5;
     if (this.hp <= 0) {
@@ -24,7 +31,12 @@ TA.Building = class {
       game.fx.burst(this.x, 10, '#c8ac99', 14, 80);
     }
   }
-  serialize() { return { type: this.type, x: this.x, hp: this.hp, side: this.side }; }
+  serialize() {
+    const o = { type: this.type, x: this.x, hp: this.hp, side: this.side };
+    if (this.level) o.level = this.level;
+    if (this.stock) { o.stock = this.stock; o.till = this.till; }
+    return o;
+  }
 };
 
 TA.Game = class {
@@ -35,34 +47,40 @@ TA.Game = class {
     TA.game = this;
     this.day = s ? s.day : 1;
     this.time = s ? s.time : TA.START_HOUR;        // hour of day 0..24
-    this.world = new TA.World(this.seed, s && s.world);
-    this.player = new TA.Player(s ? s.player.x : 18);
-    if (s) this.player.hp = s.player.hp;
+    this.claim = s ? s.claim : null;
+    this.world = new TA.World(this.seed, s && s.world, { avoidX: this.claim ? this.claim.x : null });
+    const sp = s ? s.player : null;
+    this.player = new TA.Player(sp ? sp.x : 18, sp ? sp.y || 0 : 0, sp ? sp.layer || 's' : 's');
+    if (sp) this.player.hp = sp.hp;
+    // a save from before the block world could leave the player inside rock
+    if (TA.bodyHits(this.world, this.player.x, this.player.y)) { this.player.y = 0; this.player.layer = 's'; }
     this.inv = s ? s.inv : { coin: 8, seed_wheat: 4, seed_carrot: 2 };
     this.tools = s ? s.tools : { scythe: 0, axe: 0, pick: 0 };
     this.selectedSeed = s ? s.selectedSeed : 'wheat';
-    this.claim = s ? s.claim : null;
     this.buildings = s ? s.buildings.map(b => new TA.Building({ ...b, instant: true })) : [];
     this.plots = s ? s.plots : [];
-    this.weather = s ? s.weather : { rainFrom: -1, rainTo: -1 };
+    this.weather = s && s.weather && s.weather.type ? s.weather : { type: 'clear', from: -1, to: -1 };
     this.stats = s ? s.stats : { kills: 0, harvested: 0, days: 1 };
     this.dog = s && s.dog ? new TA.Dog(s.dog.color, this.player.x - 16, true) : null;
+    if (this.dog) { this.dog.layer = this.player.layer; this.dog.y = this.player.y; }
     this.tutorial = s ? (s.tutorial || {}) : {};
 
-    this.mobs = []; this.npcs = []; this.strays = []; this.guards = []; this.arrows = []; this.drops = [];
+    this.mobs = []; this.npcs = []; this.folk = []; this.travellers = []; this.strays = []; this.guards = []; this.arrows = []; this.drops = [];
     this.active = new Map();    // world object id -> live entity/spawner
     this.fx = new TA.FX();
     this.repelZones = [];
-    this.spawnT = 8; this.saveT = 30; this.shake = 0; this.fade = 0;
-    this.lastRegion = null; this.wasNight = this.isNight();
-    this.camX = this.player.x;
+    this.spawnT = 8; this.saveT = 30; this.shake = 0; this.fade = 0; this.flash = 0; this.boltT = 6;
+    this.travelT = 20;
+    this.lastRegion = null; this.lastCave = null; this.wasNight = this.isNight();
+    this.camX = this.player.x; this.camY = Math.min(0, this.player.y - 12);
     this.rebuildGuards();
   }
 
   serialize() {
+    const p = this.player;
     return {
-      v: 1, seedStr: this.seedStr, day: this.day, time: this.time,
-      player: { x: Math.round(this.player.x), hp: this.player.hp },
+      v: 2, seedStr: this.seedStr, day: this.day, time: this.time,
+      player: { x: Math.round(p.x), y: Math.round(p.y), layer: p.layer, hp: p.hp },
       inv: this.inv, tools: this.tools, selectedSeed: this.selectedSeed,
       claim: this.claim, buildings: this.buildings.map(b => b.serialize()), plots: this.plots,
       weather: this.weather, stats: this.stats, dog: this.dog ? { color: this.dog.color } : null,
@@ -74,10 +92,18 @@ TA.Game = class {
     if (!quiet) this.ui.toast(ok ? 'Game saved' : 'Could not save in this browser', ok ? '' : 'warn');
   }
 
-  // ------------------------------------------------------------ time
+  // ------------------------------------------------------------ time & weather
   get hour() { return this.time; }
+  get underground() { return this.player.layer === 'c'; }
   isNight() { return this.time >= 20 || this.time < 5; }
-  isRaining() { const h = this.time; return h >= this.weather.rainFrom && h < this.weather.rainTo; }
+  // Current weather and how strongly it shows (it eases in and out over ~45 minutes)
+  weatherNow() {
+    const w = this.weather, h = this.time;
+    if (w.type === 'clear' || h < w.from || h >= w.to) return { type: 'clear', k: 0, def: TA.WEATHER.clear };
+    const k = TA.clamp(Math.min((h - w.from) / 0.75, (w.to - h) / 0.75), 0, 1);
+    return { type: w.type, k: TA.smooth(k), def: TA.WEATHER[w.type] };
+  }
+  isRaining() { const w = this.weatherNow(); return !!w.def.rain && w.k > 0.3; }
   darkness() {
     const h = this.time;
     if (h >= 7 && h < 17.5) return 0;
@@ -85,11 +111,20 @@ TA.Game = class {
     if (h >= 20.5 || h < 4.5) return 0.62;
     return TA.lerp(0.62, 0, (h - 4.5) / 2.5);
   }
+  rollWeather() {
+    const r = TA.rng(TA.hash(this.seed, this.day, 77));
+    const weights = {};
+    for (const [k, w] of Object.entries(TA.WEATHER)) weights[k] = w.weight;
+    const type = r.weighted(weights);
+    if (type === 'clear') return { type, from: -1, to: -1 };
+    if (TA.WEATHER[type].morning) { const f = r.int(3, 6); return { type, from: f, to: f + r.int(4, 6) }; }
+    const f = r.int(6, 15);
+    return { type, from: f, to: Math.min(24, f + r.int(3, 8)) };
+  }
   newDay() {
     this.day++; this.stats.days = this.day;
     for (const p of this.plots) p.wet = false;
-    const r = TA.rng(TA.hash(this.seed, this.day, 77));
-    this.weather = r() < 0.3 ? (() => { const f = r.int(6, 16); return { rainFrom: f, rainTo: f + r.int(2, 6) }; })() : { rainFrom: -1, rainTo: -1 };
+    this.weather = this.rollWeather();
     this.world.refreshDay(this.day);
     this.ui.toast(`Day ${this.day}`, 'day');
   }
@@ -98,7 +133,7 @@ TA.Game = class {
     this.time += dh;
     if (this.time >= 24) { this.time -= 24; this.newDay(); }
     // dawn: undead crumble
-    if (before < 6 && this.time >= 6) for (const m of this.mobs) if (m.def.undead && m.nightSpawn && !m.dead) { m.die(this, false); this.fx.burst(m.x, 6, '#fbb954', 8); }
+    if (before < 6 && this.time >= 6) for (const m of this.mobs) if (m.def.undead && m.nightSpawn && !m.dead && m.layer === 's') { m.die(this, false); this.fx.burst(m.x, 6, '#fbb954', 8); }
   }
 
   // ------------------------------------------------------------ claim / buildings
@@ -124,9 +159,12 @@ TA.Game = class {
     for (const type of TA.BUILD_ORDER) {
       const def = TA.BUILDABLE[type];
       let ok = true, why = '';
-      if (type === 'banner') {
+      if (this.underground) { ok = false; why = 'You can only build above ground'; }
+      else if (type === 'banner') {
         if (this.claim) continue;
         if (this.world.poiAt(p.x, 40)) { ok = false; why = 'Too close to someone else\'s land'; }
+        else if (this.world.shaftAt(p.x, 60)) { ok = false; why = 'The ground here is too rough'; }
+        else if (this.world.bordersIn(p.x - 220, p.x + 220).length) { ok = false; why = 'Too close to the edge of these lands'; }
       } else {
         if (!this.claim) { ok = false; why = 'Plant a banner first'; }
         else if (!this.inClaim(p.x)) { ok = false; why = 'Stand on your land'; }
@@ -165,6 +203,57 @@ TA.Game = class {
     this.fx.burst(x, 4, '#c8ac99', 12, 60);
     this.save(true);
   }
+  upgradeTower(b) {
+    const next = TA.TOWER_LEVELS[b.level + 1];
+    if (!next || !this.canAfford(next.cost)) return;
+    this.pay(next.cost);
+    b.level++; b.syncArchers(); b.t = 0; // replays the build animation
+    this.fx.burst(b.x, 10, '#c8ac99', 12, 60);
+    this.ui.toast(`Watchtower level ${b.level}: ${next.archers} archers at the windows`, 'good');
+    this.save(true);
+  }
+
+  // ------------------------------------------------------------ market stall
+  stallPrice(item) { return Math.ceil(TA.ITEMS[item].sell * TA.STALL_PREMIUM); }
+  // A traveller picks a few things off the stall and pays into the till
+  travellerBuys(t, m) {
+    const bought = {};
+    let spent = 0;
+    for (let k = 0; k < 6; k++) {
+      const items = Object.keys(m.stock).filter(i => m.stock[i] > 0 && this.stallPrice(i) <= t.purse - spent);
+      if (!items.length) break;
+      const it = items[Math.floor(Math.random() * items.length)];
+      const n = Math.min(m.stock[it], 1 + Math.floor(Math.random() * 3), Math.floor((t.purse - spent) / this.stallPrice(it)));
+      m.stock[it] -= n; spent += n * this.stallPrice(it); bought[it] = (bought[it] || 0) + n;
+      if (!m.stock[it]) delete m.stock[it];
+      if (Math.random() < 0.4) break;
+    }
+    if (!spent) return 0;
+    m.till += spent;
+    const list = Object.entries(bought).map(([i, n]) => `${n} ${TA.ITEMS[i].name}`).join(', ');
+    this.ui.toast(t.virtual ? `While you were away, a traveller bought ${list} (+${spent})` : `A traveller bought ${list} (+${spent} in the till)`, 'good');
+    if (!t.virtual) { this.fx.text(m.x, 30, `+${spent}`, '#f9c22b'); this.fx.burst(m.x, 14, '#f9c22b', 6); }
+    return spent;
+  }
+  spawnTravellers(dt) {
+    const h = this.time;
+    if (h < 7 || h > 18.5) return;
+    this.travelT -= dt;
+    if (this.travelT > 0) return;
+    const market = this.buildings.find(b => b.type === 'market' && b.built);
+    const stocked = market && Object.values(market.stock).some(n => n > 0);
+    this.travelT = stocked ? 35 + Math.random() * 45 : 60 + Math.random() * 80;
+    const p = this.player;
+    const nearHome = market && p.layer === 's' && Math.abs(p.x - market.x) < 500;
+    if (stocked && !nearHome) { if (Math.random() < 0.7) this.travellerBuys({ purse: 20 + Math.floor(Math.random() * 60), virtual: true }, market); return; }
+    if (p.layer !== 's' || this.travellers.length >= 2) return;
+    // walk in from one edge of the view; when home has a stall, head past it
+    let side = Math.random() < 0.5 ? -1 : 1;
+    if (nearHome) side = market.x < p.x ? 1 : -1;
+    const x = p.x + side * ((TA.renderer ? TA.renderer.w / 2 : 120) + 24);
+    if (this.world.surfaceClamp(p.x, x) !== x) return;
+    this.travellers.push(new TA.Traveller(x, -side, TA.TRAVELLERS[Math.floor(Math.random() * TA.TRAVELLERS.length)]));
+  }
 
   // ------------------------------------------------------------ farming
   plotAt(slot) { return this.plots.find(p => p.x === slot); }
@@ -177,12 +266,12 @@ TA.Game = class {
   fertility(x) { return TA.BIOMES[this.world.biomeAt(x)].fertility; }
 
   // ------------------------------------------------------------ items
-  give(item, n = 1, x) {
+  give(item, n = 1) {
     this.inv[item] = (this.inv[item] || 0) + n;
     this.ui.flashItem(item);
   }
-  dropItem(x, item, n) {
-    for (let i = 0; i < n; i++) this.drops.push({ x: x + (Math.random() - 0.5) * 6, y: 4, vx: (Math.random() - 0.5) * 50, vy: 40 + Math.random() * 30, item, t: 0 });
+  dropItem(x, item, n, base = 0) {
+    for (let i = 0; i < n; i++) this.drops.push({ x: x + (Math.random() - 0.5) * 6, base, y: 4, vx: (Math.random() - 0.5) * 50, vy: 40 + Math.random() * 30, item, t: 0 });
   }
   eat() {
     const p = this.player;
@@ -192,7 +281,7 @@ TA.Game = class {
     const k = foods[0];
     const heal = TA.ITEMS[k].heal || 1;
     this.inv[k]--; p.hp = Math.min(p.maxHp, p.hp + heal);
-    this.fx.text(p.x, 22, `+${heal}`, '#91db69');
+    this.fx.text(p.x, p.y + 22, `+${heal}`, '#91db69');
   }
   cycleSeed() {
     const owned = TA.CROP_ORDER.filter(c => (this.inv['seed_' + c] || 0) > 0);
@@ -215,33 +304,47 @@ TA.Game = class {
   // ------------------------------------------------------------ the one action button
   // Returns {label, icon, run} for whatever the player is facing.
   contextTarget() {
-    const p = this.player, game = this;
+    const p = this.player;
     if (!p.alive || p.state !== 'free') return null;
     const fx = p.x + p.dir * 8;
+    const sameLevel = (o, tol = 12) => Math.abs((o.y || 0) - p.y) < tol;
+    const L = p.layer;
     // creatures
-    const mob = this.mobs.find(m => !m.dead && Math.abs(m.x - fx) < 14);
+    const mob = this.mobs.find(m => !m.dead && m.layer === L && Math.abs(m.x - fx) < 14 && sameLevel(m, 14));
     if (mob) return { label: 'Attack', icon: 'scythe', run: () => this.swing() };
-    // folk
-    const npc = this.npcs.find(n => Math.abs(n.x - p.x) < 24);
-    if (npc) return { label: 'Trade', icon: 'coin', run: () => this.ui.openShop(npc.kind) };
-    const stray = this.strays.find(d => Math.abs(d.x - p.x) < 16);
-    if (stray) return { label: this.dog ? 'Pet' : 'Adopt dog', icon: 'heart', run: () => this.adopt(stray) };
+    const near = this.world.objectsIn(p.x - 30, p.x + 30, null).filter(o => sameLevel(o, 10));
+    // the way down into the caves, portals
+    const mouth = near.find(o => o.kind === 'mouth' && Math.abs(o.x - p.x) < TA.HOLE);
+    if (mouth && p.onGround) return { label: 'Climb down', icon: 'pick', run: () => p.drop(this) };
+    const portal = near.find(o => o.kind === 'portal' && Math.abs(o.x - p.x) < 10);
+    if (portal) return { label: 'Step into the portal', icon: 'moon', run: () => this.usePortal(portal.portal) };
+    if (L === 's' && p.onGround) {
+      // folk
+      const npc = this.npcs.find(n => Math.abs(n.x - p.x) < 24);
+      if (npc) return { label: 'Trade', icon: 'coin', run: () => this.ui.openShop(npc.kind) };
+      const trav = this.travellers.find(t => Math.abs(t.x - p.x) < 20 && t.state === 'walk');
+      if (trav) return { label: 'Trade with traveller', icon: 'coin', run: () => this.ui.openShop('trader') };
+      const stray = this.strays.find(d => Math.abs(d.x - p.x) < 16);
+      if (stray) return { label: this.dog ? 'Pet' : 'Adopt dog', icon: 'heart', run: () => this.adopt(stray) };
+      const folk = this.folk.find(f => !f.inside && f.alpha > 0.5 && Math.abs(f.x - fx) < 10);
+      if (folk) return { label: 'Talk', icon: 'heart', run: () => this.ui.toast(`"${folk.talk(this)}"`) };
+    }
     // world objects in front
-    const near = this.world.objectsIn(p.x - 30, p.x + 30);
     const chest = near.find(o => o.kind === 'chest' && !this.world.opened[o.id] && Math.abs(o.x - p.x) < 14);
     if (chest) return { label: 'Open chest', icon: 'key', run: () => this.openChest(chest) };
     // own buildings
-    const b = this.inClaim(p.x) ? this.buildings.find(b => b.built && b.type !== 'banner' && b.type !== 'wall' && Math.abs(b.x - p.x) < Math.min(14, b.width / 2)) : null;
+    const b = L === 's' && this.inClaim(p.x) ? this.buildings.find(b => b.built && b.type !== 'banner' && b.type !== 'wall' && Math.abs(b.x - p.x) < Math.min(14, b.width / 2)) : null;
     if (b) {
       if (b.type === 'hut') return this.isNight() || this.time >= 18
         ? { label: 'Sleep', icon: 'moon', run: () => this.sleep() }
         : { label: 'Rest & save', icon: 'sun', run: () => { p.hp = Math.min(p.maxHp, p.hp + 1); this.save(); } };
-      if (b.type === 'market') return { label: 'Sell harvest', icon: 'coin', run: () => this.ui.openShop('market') };
+      if (b.type === 'market') return { label: b.till ? `Market (${b.till} in the till)` : 'Market', icon: 'coin', run: () => this.ui.openMarket(b) };
       if (b.type === 'armory') return { label: 'Upgrade tools', icon: 'axe', run: () => this.ui.openArmory() };
+      if (b.type === 'watchtower') return { label: b.level < 3 ? 'Upgrade watchtower' : 'Watchtower', icon: 'banner', run: () => this.ui.openTower(b) };
     }
     // fields
     const slot = this.slotFor(fx);
-    const pl = this.plotAt(slot);
+    const pl = L === 's' && p.onGround ? this.plotAt(slot) : null;
     if (pl && Math.abs(slot - fx) <= 10) {
       const st = this.cropStage(pl);
       if (st === 4) return { label: `Harvest ${TA.CROPS[pl.crop].name}`, icon: pl.crop, slot, run: () => this.harvest(pl) };
@@ -252,23 +355,33 @@ TA.Game = class {
       return { label: 'No seeds of this kind', icon: seed, slot, run: null };
     }
     // nature
-    const obj = near.filter(o => ['tree', 'rock', 'bush', 'mushroom', 'wildcrop'].includes(o.kind) && Math.abs(o.x - fx) < (o.kind === 'rock' ? 14 : 10))
+    const obj = near.filter(o => ['tree', 'rock', 'bush', 'mushroom', 'glow', 'wildcrop'].includes(o.kind) && Math.abs(o.x - fx) < (o.kind === 'rock' ? 14 : 10))
       .sort((a, b) => Math.abs(a.x - fx) - Math.abs(b.x - fx))[0];
     if (obj) {
       if (obj.kind === 'tree') return { label: 'Chop', icon: 'axe', run: () => this.chop(obj) };
       if (obj.kind === 'rock') return { label: 'Mine', icon: 'pick', run: () => this.mine(obj) };
       if (obj.kind === 'bush') return { label: 'Forage', icon: 'berry', run: () => this.forage(obj) };
       if (obj.kind === 'mushroom') return { label: 'Pick mushroom', icon: 'mushroom', run: () => this.forage(obj) };
+      if (obj.kind === 'glow') return { label: 'Gather glowbloom', icon: 'berry', run: () => this.forage(obj) };
       if (obj.kind === 'wildcrop') return { label: 'Gather wild moonflower', icon: 'moonflower', run: () => this.forage(obj) };
     }
+    // dig below / above while holding ↓ / ↑
+    const inp = this.input;
+    if (inp.isDown('down') || inp.isDown('up')) {
+      const aim = this.aimCell(false);
+      if (aim) return { label: `Dig ${TA.BLOCKS[aim.t].name.toLowerCase()}`, icon: 'pick', dig: aim, run: () => { } };
+    }
     // till new field on your land
-    if (this.inClaim(fx)) {
+    if (L === 's' && p.onGround && this.inClaim(fx)) {
       const blockB = this.buildingAt(slot, 4);
-      const blockN = near.some(o => (['tree', 'rock'].includes(o.kind) && Math.abs(o.x - slot) < 10) || (['campfire', 'chest', 'struct', 'flag'].includes(o.kind) && Math.abs(o.x - slot) < 16));
+      const blockN = near.some(o => (['tree', 'rock'].includes(o.kind) && Math.abs(o.x - slot) < 10) || (['campfire', 'chest', 'struct', 'flag', 'mouth'].includes(o.kind) && Math.abs(o.x - slot) < 16));
       const flag = this.buildings.find(b => b.type === 'banner' && Math.abs(b.x - slot) < 12);
       if (!blockB && !blockN && !flag && Math.abs(slot - this.claim.x) < this.claim.r - 20)
         return { label: 'Till soil', icon: 'hoe', slot, run: () => this.till(slot) };
     }
+    // dig into the wall in front
+    const aim = this.aimCell(false);
+    if (aim) return { label: `Dig ${TA.BLOCKS[aim.t].name.toLowerCase()}`, icon: 'pick', dig: aim, run: () => { } };
     return { label: 'Swing', icon: 'scythe', run: () => this.swing(), quiet: true };
   }
   doAction() {
@@ -280,7 +393,7 @@ TA.Game = class {
     const p = this.player;
     p.act('farmer', 'scythe', 3, () => {
       const dmg = 1 + this.tools.scythe;
-      for (const m of this.mobs) if (!m.dead && Math.abs(m.x - (p.x + p.dir * 10)) < 15) m.hurt(dmg, p.x, this);
+      for (const m of this.mobs) if (!m.dead && m.layer === p.layer && Math.abs(m.x - (p.x + p.dir * 10)) < 15 && Math.abs(m.y - p.y) < 14) m.hurt(dmg, p.x, this);
     });
   }
   chop(o) {
@@ -300,22 +413,23 @@ TA.Game = class {
     });
   }
   mine(o) {
-    const p = this.player;
+    const p = this.player, oy = o.y || 0;
     p.act('miner', 'mine', 3, () => {
       o.hp -= 1 + this.tools.pick;
-      this.fx.burst(o.x, 4, '#9babb2', 5);
+      this.fx.burst(o.x, oy + 4, '#9babb2', 5);
       if (o.hp <= 0) {
-        this.dropItem(o.x, 'stone', 2 + Math.floor(Math.random() * (o.rich ? 4 : 3)));
-        if (o.gems && Math.random() < (o.rich ? 0.45 : 0.15)) this.dropItem(o.x, 'gem', 1);
+        this.dropItem(o.x, 'stone', 2 + Math.floor(Math.random() * (o.rich ? 4 : 3)), oy);
+        if (o.gems && Math.random() < (o.rich ? 0.45 : 0.15)) this.dropItem(o.x, 'gem', 1, oy);
         this.world.remove(o, this.day);
-        this.fx.burst(o.x, 4, '#7f708a', 12, 60);
+        this.fx.burst(o.x, oy + 4, '#7f708a', 12, 60);
       }
     });
   }
   forage(o) {
-    const p = this.player;
+    const p = this.player, oy = o.y || 0;
     p.act('farmer', 'sow', 3, () => {
-      if (o.kind === 'mushroom') this.dropItem(o.x, 'mushroom', 1);
+      if (o.kind === 'mushroom') this.dropItem(o.x, 'mushroom', 1, oy);
+      else if (o.kind === 'glow') { this.dropItem(o.x, 'berry', 1, oy); if (Math.random() < 0.25) this.dropItem(o.x, 'potion', 1, oy); }
       else if (o.kind === 'wildcrop') { this.dropItem(o.x, 'seed_moonflower', 1); if (Math.random() < 0.4) this.dropItem(o.x, 'moonflower', 1); }
       else {
         const r = Math.random();
@@ -325,7 +439,7 @@ TA.Game = class {
         if (Math.random() < 0.12) this.dropItem(o.x, r < 0.5 ? 'seed_wheat' : 'seed_carrot', 1);
       }
       this.world.remove(o, this.day);
-      this.fx.burst(o.x, 6, '#1ebc73', 6);
+      this.fx.burst(o.x, oy + 6, '#1ebc73', 6);
     });
   }
   till(slot) {
@@ -359,8 +473,8 @@ TA.Game = class {
   openChest(o) {
     this.world.opened[o.id] = true;
     const loot = this.chestLoot(o.tier || 1);
-    for (const [k, v] of Object.entries(loot)) this.dropItem(o.x, k, v);
-    this.fx.burst(o.x, 6, '#f9c22b', 12);
+    for (const [k, v] of Object.entries(loot)) this.dropItem(o.x, k, v, o.y || 0);
+    this.fx.burst(o.x, (o.y || 0) + 6, '#f9c22b', 12);
     this.ui.toast('Found a stash!', 'good');
   }
   adopt(d) {
@@ -371,6 +485,145 @@ TA.Game = class {
     this.dog = d;
     this.ui.toast('A loyal friend joins you!', 'good');
   }
+
+  // ------------------------------------------------------------ digging and building
+  // Hold the mouse or a finger on a block in reach, or hold E at the block in
+  // front (↓ / ↑ aim below / above), to dig it out. R, a right click, or a
+  // finger on an empty spot places dirt (or stone, when out of dirt).
+  inReach(c, r) { const p = this.player; return Math.hypot(c * 8 + 4 - p.x, r * 8 + 4 - (p.y + 7)) <= TA.REACH; }
+  pointerCell() {
+    const R = TA.renderer, inp = this.input;
+    if (!R || !inp.aiming || this.ui.modal) return null;
+    const c = Math.floor((R.camX + inp.pointer.x / R.scale) / 8), r = Math.floor((R.baseY - inp.pointer.y / R.scale) / 8);
+    return this.inReach(c, r) ? { c, r, t: this.world.cell(c, r) } : null;
+  }
+  // The block the keyboard aims at: in front (the lower one first), below or above
+  aimCell(placing) {
+    const p = this.player, inp = this.input;
+    if (!p.alive) return null;
+    const cx = Math.floor(p.x / 8), r0 = Math.floor((p.y + 0.01) / 8), r1 = Math.floor((p.y + TA.PLAYER_H - 0.01) / 8);
+    const fc = Math.floor((p.x + p.dir * (TA.BODY_HW + 3)) / 8);
+    const cells = inp.isDown('down') ? [[cx, r0 - 1]] : inp.isDown('up') ? [[cx, r1 + 1]] : [[fc, r0], [fc, r1]];
+    for (const [c, r] of cells) {
+      const t = this.world.cell(c, r);
+      if (placing ? t === TA.CELL.AIR : this.canDig(c, r)) return { c, r, t };
+    }
+    return null;
+  }
+  canDig(c, r) {
+    const t = this.world.cell(c, r);
+    if (!(TA.SOLID[t] || t === TA.CELL.LEDGE) || t === TA.CELL.BEDROCK) return false;
+    if (r === -1 || r === -2) {
+      // the ground's crust: not in towns, thickets, fields or under buildings and things standing on it
+      const x = c * 8 + 4, w = this.world;
+      if (w.poiAt(x, 4) || w.bordersIn(x - 70, x + 70).some(b => Math.abs(b.x - x) < 64)) return false;
+      if (this.buildingAt(x, 4) || this.plots.some(pl => Math.abs(pl.x - x) < 12)) return false;
+      const grass = o => o.kind === 'decor' && !o.spr.startsWith('tree_');
+      if (w.objectsIn(x - 24, x + 24, 's').some(o => !grass(o) && !o.back && Math.abs(o.x - x) < Math.max(6, TA.objW(o) / 2))) return false;
+    }
+    return true;
+  }
+  updateDigging(dt) {
+    const p = this.player, inp = this.input, pc = this.pointerCell();
+    if (this.ui.modal) { this.digging = null; return; }
+    // building
+    if (inp.hit('place')) { const a = pc && pc.t === TA.CELL.AIR ? pc : this.aimCell(true); if (a) this.placeBlock(a.c, a.r); }
+    if (inp.pointer.hit && pc && (inp.pointer.button === 2 || (inp.pointer.touch && pc.t === TA.CELL.AIR))) this.placeBlock(pc.c, pc.r);
+    // digging
+    let tgt = null;
+    if (inp.pointer.down && inp.pointer.button === 0 && pc && this.canDig(pc.c, pc.r)) tgt = pc;
+    else if (inp.isDown('action') && this.ui.target && this.ui.target.dig) tgt = this.ui.target.dig;
+    if (!tgt || !p.alive || p.state !== 'free') { this.digging = null; return; }
+    if (!this.digging || this.digging.c !== tgt.c || this.digging.r !== tgt.r) this.digging = { c: tgt.c, r: tgt.r, t: 0 };
+    const t = this.world.cell(tgt.c, tgt.r), x = tgt.c * 8 + 4;
+    this.digging.t += dt * (1 + 0.6 * this.tools.pick) / TA.BLOCKS[t].hard;
+    if (Math.abs(x - p.x) > 2) p.dir = Math.sign(x - p.x);
+    if (Math.random() < dt * 10) this.fx.burst(x, tgt.r * 8 + 4, TA.BLOCK_FX[t], 1, 30);
+    if (this.digging.t >= 1) { this.breakCell(tgt.c, tgt.r); this.digging = null; }
+  }
+  breakCell(c, r) {
+    const w = this.world, t = w.cell(c, r), x = c * 8 + 4;
+    w.setCell(c, r, TA.CELL.AIR);
+    const base = w.floorBelow(x, r * 8 + 4);
+    for (const [item, v] of Object.entries(TA.BLOCKS[t].drop)) {
+      const n = Array.isArray(v) ? v[0] + Math.floor(Math.random() * (v[1] - v[0] + 1)) : v < 1 ? (Math.random() < v ? 1 : 0) : v;
+      if (n) this.dropItem(x, item, n, base);
+    }
+    this.fx.burst(x, r * 8 + 4, TA.BLOCK_FX[t], 8, 50);
+    // whatever stood on the block or hung under it
+    for (const o of w.objectsIn(x - 8, x + 8, null)) {
+      if (o.gone || Math.abs(o.x - x) > 4) continue;
+      const on = !o.hang && (o.y || 0) === (r + 1) * 8, under = o.hang && o.y === r * 8;
+      if (!on && !under) continue;
+      if (o.kind === 'chest' || o.kind === 'portal' || o.kind === 'mobs') o.y = w.floorBelow(o.x, o.y);
+      else w.remove(o, this.day, true);
+    }
+    this.tutorial.dug = true;
+  }
+  placeBlock(c, r) {
+    const w = this.world;
+    if (w.cell(c, r) !== TA.CELL.AIR || r > 24 || !this.inReach(c, r)) return;
+    const item = (this.inv.dirt || 0) > 0 ? 'dirt' : (this.inv.stone || 0) > 0 ? 'stone' : null;
+    if (!item) { this.ui.toast('Nothing to build with. Dig some dirt or stone.'); return; }
+    // never inside anyone
+    const x0 = c * 8, y0 = r * 8;
+    const bodies = [this.player, this.dog, ...this.mobs.filter(m => !m.dead)].filter(Boolean);
+    if (bodies.some(b => b.x + TA.BODY_HW > x0 && b.x - TA.BODY_HW < x0 + 8 && b.y + TA.PLAYER_H > y0 && b.y < y0 + 8)) return;
+    const C = TA.CELL;
+    w.setCell(c, r, r === -1 || r === -2 ? C.GROUND : item === 'dirt' ? C.DIRT : C.STONE);
+    this.inv[item]--;
+    this.fx.burst(c * 8 + 4, r * 8 + 4, TA.BLOCK_FX[item === 'dirt' ? C.DIRT : C.STONE], 4, 30);
+  }
+
+  // ------------------------------------------------------------ borders
+  // Walking into the thicket at a biome border asks whether to travel on. It
+  // asks once; walk back out of the thicket and in again to be asked again.
+  checkBorder() {
+    const p = this.player;
+    if (p.layer !== 's' || !p.alive || p.state !== 'free') return;
+    const bd = this.world.bordersIn(p.x - 40, p.x + 40).find(b => Math.abs(p.x - b.x) <= TA.BORDER + 8);
+    if (!bd) { this.borderAsked = null; return; }
+    if (this.borderAsked === bd.x || Math.abs(Math.abs(p.x - bd.x) - TA.BORDER) > 0.5) return;
+    this.borderAsked = bd.x;
+    this.ui.openTravel(bd, p.x < bd.x ? 1 : -1);
+  }
+  // Through the thicket, in a fade, out the far side
+  crossBorder(bd, dir) {
+    this.player.dir = dir;
+    this.travel('s', bd.x + dir * (TA.BORDER + 6), 0, null);
+  }
+  // Back out of the thicket
+  turnBack(dir) {
+    const p = this.player;
+    p.x -= dir * 10; p.dir = -dir;
+  }
+
+  // ------------------------------------------------------------ portals
+  // Fade out, move the player (and dog) to (x, y) far away, fade back in.
+  travel(layer, x, y, msg) {
+    const p = this.player;
+    p.state = 'action'; p.action = { hitFrame: 99, applied: true }; p.anim.set('player', 'idle', true);
+    this.ui.fadeOut(() => {
+      p.layer = layer; p.x = x; p.y = y; p.vy = 0; p.onGround = true; p.state = 'free'; p.action = null; p.invuln = 1;
+      this.clearLayer();
+      if (this.dog) { this.dog.layer = layer; this.dog.x = x - p.dir * 10; this.dog.y = y; this.dog.vy = 0; }
+      this.camX = x; this.camY = layer === 'c' ? Math.min(0, y - 12) : 0;
+      this.lastCave = null; // the region check in update() announces where you arrived
+      if (msg) this.ui.toast(msg);
+    });
+  }
+  // Drop everything streamed in around the old spot
+  clearLayer() {
+    this.active.clear();
+    this.mobs = []; this.npcs = []; this.folk = []; this.strays = []; this.travellers = []; this.arrows = []; this.drops = [];
+  }
+  usePortal(pt) {
+    const to = pt.to;
+    for (const e of [pt, to]) this.world.discovered[e.id] = { x: e.x, type: 'portal', biome: this.world.biomeAt(e.x), layer: e.layer };
+    this.flash = 0.8;
+    this.travel(to.layer, to.x + 14, to.y, 'The portal hums and the world folds. You step out somewhere far away.');
+  }
+
   sleep() {
     this.ui.fadeOut(() => {
       // sleep until 6am
@@ -392,14 +645,16 @@ TA.Game = class {
       const lost = Math.floor((this.inv.coin || 0) * 0.3);
       this.inv.coin = (this.inv.coin || 0) - lost;
       const p = this.player;
-      p.x = hut ? hut.x : banner ? banner.x : 0;
+      const wasUnder = p.layer !== 's';
+      p.x = hut ? hut.x : banner ? banner.x : 0; p.y = 0; p.vy = 0; p.layer = 's'; p.onGround = true;
       p.hp = p.maxHp; p.state = 'free'; p.anim.set('player', 'idle', true); p.invuln = 2;
+      if (wasUnder) this.clearLayer();
       this.mobs = this.mobs.filter(m => !m.nightSpawn);
       for (const m of this.mobs) if (Math.abs(m.x - p.x) < 200) m.removeMe = true;
       const h = this.time >= 6 ? 24 - this.time + 6 : 6 - this.time;
       if (this.isNight()) this.advanceTime(h);
-      if (this.dog) this.dog.x = p.x - 12;
-      this.camX = p.x;
+      if (this.dog) { this.dog.x = p.x - 12; this.dog.y = 0; this.dog.layer = 's'; }
+      this.camX = p.x; this.camY = 0;
       this.ui.toast(lost ? `You wake up at ${hut ? 'your hut' : banner ? 'your banner' : 'the old campfire'}. Lost ${lost} coins.` : 'You wake up, bruised.', 'warn');
     }), 1800);
   }
@@ -418,10 +673,11 @@ TA.Game = class {
 
   stream() {
     const p = this.player;
-    const objs = this.world.objectsIn(p.x - 300, p.x + 300);
+    const objs = this.world.objectsIn(p.x - 300, p.x + 300, null);
     for (const o of objs) {
       if (this.active.has(o.id)) continue;
       if (o.kind === 'npc') { const n = new TA.NPC(o.npc, o.x, o.poi); this.npcs.push(n); this.active.set(o.id, n); }
+      else if (o.kind === 'folk') { const f = new TA.Folk(o); this.folk.push(f); this.active.set(o.id, f); }
       else if (o.kind === 'dog') {
         if (this.world.opened[o.id] || (this.dog && this.dog.color === o.dog)) continue;
         const d = new TA.Dog(o.dog, o.x); this.strays.push(d); this.active.set(o.id, d);
@@ -432,29 +688,41 @@ TA.Game = class {
         if (o.nightOnly && !this.isNight()) continue;
         if (!o.mobs.length) continue;
         const lvl = this.world.danger(o.x);
-        const sp = { mobs: [], poi: poiId };
-        o.mobs.forEach((t, i) => { const m = new TA.Mob(t, o.x + (i - o.mobs.length / 2) * 14, { poi: poiId, level: lvl }); sp.mobs.push(m); this.mobs.push(m); });
+        const sp = { mobs: [], poi: poiId, home: o.x, layer: o.layer || 's' };
+        o.mobs.forEach((t, i) => {
+          const x = o.x + (i - o.mobs.length / 2) * (sp.layer === 'c' ? 2 : 14); // underground, keep to the lair's own block
+          const m = new TA.Mob(t, x, { poi: poiId, level: lvl, layer: sp.layer, y: this.world.floorBelow(x, (o.y || 0) + 4) });
+          sp.mobs.push(m); this.mobs.push(m);
+        });
         this.active.set(o.id, sp);
+      } else if (o.kind === 'mouth' || o.kind === 'portal') {
+        const id = o.kind === 'mouth' ? o.shaft.id : o.id;
+        if (!this.world.discovered[id] && Math.abs(o.x - p.x) < 90) {
+          this.world.discovered[id] = { x: o.x, type: o.kind === 'mouth' ? 'cave' : 'portal', biome: this.world.biomeAt(o.x), layer: o.layer || 's' };
+          this.ui.toast(o.kind === 'mouth' ? 'Discovered: Cave entrance' : 'Discovered: a humming portal', 'discover');
+        }
       }
     }
     // despawn far things
     for (const [id, e] of this.active) {
-      const x = e.mobs ? (e.mobs[0] ? e.mobs[0].home : p.x + 9999) : e.x;
+      const x = e.mobs ? e.home : e.x;
       if (Math.abs(x - p.x) > 560) {
         this.active.delete(id);
         if (e.mobs) e.mobs.forEach(m => m.removeMe = true);
-        else { this.npcs = this.npcs.filter(n => n !== e); this.strays = this.strays.filter(n => n !== e); }
+        else { this.npcs = this.npcs.filter(n => n !== e); this.strays = this.strays.filter(n => n !== e); this.folk = this.folk.filter(n => n !== e); }
       } else if (e.mobs && e.mobs.length && e.mobs.every(m => m.dead)) {
         this.world.cleared[e.poi] = this.day; e.mobs = [];
-        this.ui.toast('The camp is cleared', 'good');
+        if (e.layer === 's') this.ui.toast('The camp is cleared', 'good');
       }
     }
     // discovery
-    const i = this.world.regionOf(p.x);
-    for (const j of [i - 1, i, i + 1]) for (const poi of this.world.poisOfRegion(j)) {
-      if (!this.world.discovered[poi.id] && Math.abs(poi.x - p.x) < 110) {
-        this.world.discovered[poi.id] = { x: poi.x, type: poi.type, biome: poi.biome };
-        this.ui.toast(`Discovered: ${TA.POI_DEFS[poi.type].label}`, 'discover');
+    if (p.layer === 's') {
+      const i = this.world.regionOf(p.x);
+      for (const j of [i - 1, i, i + 1]) for (const poi of this.world.poisOfRegion(j)) {
+        if (!this.world.discovered[poi.id] && Math.abs(poi.x - p.x) < poi.w / 2 + 40) {
+          this.world.discovered[poi.id] = { x: poi.x, type: poi.type, biome: poi.biome };
+          this.ui.toast(`Discovered: ${TA.POI_DEFS[poi.type].label}`, 'discover');
+        }
       }
     }
     const ex = this.world.explored;
@@ -464,20 +732,32 @@ TA.Game = class {
   spawnHostiles(dt) {
     const p = this.player;
     if (!p.alive) return;
-    const night = this.isNight();
+    const night = this.isNight(), under = p.layer === 'c';
     this.spawnT -= dt;
     if (this.spawnT > 0) return;
     const viewHalf = TA.renderer ? TA.renderer.w / 2 : 200;
     const side = Math.random() < 0.5 ? -1 : 1;
     const x = p.x + side * (viewHalf + 30 + Math.random() * 60);
+    const danger = this.world.danger(x);
+    if (under) {
+      // the caves are always dark
+      this.spawnT = Math.max(9, 22 - danger * 2);
+      if (this.mobs.filter(m => m.nightSpawn && !m.dead).length >= 1 + Math.ceil(danger / 2)) return;
+      if (this.world.shaftAt(x, 60)) return;
+      const cx = Math.floor(x / 8) * 8 + 4, y = this.world.caveFloorNear(cx, p.y);
+      if (y === null || Math.abs(y - p.y) > 80) return;
+      const list = TA.CAVE_BIOMES[this.world.caveBiomeAt(cx)].mobs;
+      this.mobs.push(new TA.Mob(list[Math.floor(Math.random() * list.length)], cx, { night: true, level: danger, layer: 'c', y }));
+      return;
+    }
     const biome = TA.BIOMES[this.world.biomeAt(x)];
     const list = night ? biome.night : biome.day;
-    const danger = this.world.danger(x);
     this.spawnT = night ? Math.max(4, 14 - danger * 2) : 25;
     if (!list.length) return;
     const cap = night ? 2 + danger : 1 + Math.floor(danger / 2);
     if (this.mobs.filter(m => m.nightSpawn && !m.dead).length >= cap) return;
     if (this.inClaim(x) || this.repelZones.some(L => Math.abs(x - L.x) < L.r)) return;
+    if (this.world.surfaceClamp(p.x, x) !== x) return; // nothing comes through the thickets
     let type = list[Math.floor(Math.random() * list.length)];
     if (type === 'demon' && danger < 4) type = 'goblin';
     this.mobs.push(new TA.Mob(type, x, { night: true, level: danger }));
@@ -485,8 +765,13 @@ TA.Game = class {
 
   update(dt) {
     const inp = this.input, p = this.player;
-    // menus pause the world
-    if (this.ui.modal) { if (inp.hit('menu')) this.ui.closeModal(); return; }
+    // menus pause the world; some answer to the keyboard (E / Enter, Esc)
+    if (this.ui.modal) {
+      const keys = this.ui.modal.keys || {};
+      if (inp.hit('menu')) { if (keys.menu) this.ui.modal.onClick(keys.menu); else this.ui.closeModal(); }
+      else if (keys.action && inp.hit('action')) this.ui.modal.onClick(keys.action);
+      return;
+    }
     if (inp.hit('build')) this.ui.openBuild();
     if (inp.hit('seed')) this.cycleSeed();
     if (inp.hit('eat')) this.eat();
@@ -496,6 +781,8 @@ TA.Game = class {
     this.advanceTime(dt * 24 / TA.DAY_SECONDS);
     this.growCrops(dt);
     p.update(dt, this);
+    this.updateDigging(dt);
+    this.checkBorder();
     this.stream();
 
     // repel zones (light)
@@ -508,23 +795,30 @@ TA.Game = class {
     for (const o of this.world.objectsIn(p.x - 400, p.x + 400)) if (o.kind === 'campfire') this.repelZones.push({ x: o.x, r: o.light, all: false });
 
     this.spawnHostiles(dt);
+    this.spawnTravellers(dt);
     for (const m of this.mobs) m.update(dt, this);
     this.mobs = this.mobs.filter(m => !m.removeMe && !(m.nightSpawn && Math.abs(m.x - p.x) > 700));
     for (const n of this.npcs) n.update(dt, this);
+    for (const f of this.folk) f.update(dt, this);
+    for (const t of this.travellers) t.update(dt, this);
+    this.travellers = this.travellers.filter(t => !t.removeMe);
     for (const d of this.strays) d.update(dt, this);
     if (this.dog) this.dog.update(dt, this);
     for (const g of this.guards) g.update(dt, this);
 
-    // buildings: construction + archers
+    // buildings: construction + archers firing from the tower windows
     for (const b of this.buildings) {
       b.t += dt;
-      if (b.type === 'watchtower' && b.built) {
-        b.cool -= dt;
-        if (b.cool <= 0) {
-          const foe = this.mobs.filter(m => !m.dead && Math.abs(m.x - b.x) < 150).sort((a, c) => Math.abs(a.x - b.x) - Math.abs(c.x - b.x))[0];
-          if (foe) { this.arrows.push(new TA.Arrow(b.x, 26, foe, 1 + Math.floor(this.tools.scythe / 2))); b.cool = 1.6; b.aimDir = Math.sign(foe.x - b.x); }
-        }
-      }
+      if (b.type !== 'watchtower' || !b.built) continue;
+      const foes = this.mobs.filter(m => !m.dead && m.layer === 's' && Math.abs(m.x - b.x) < 150).sort((a, c) => Math.abs(a.x - b.x) - Math.abs(c.x - b.x));
+      b.archers.forEach((a, i) => {
+        a.cool -= dt; a.shot += dt;
+        const foe = foes[i % Math.max(1, foes.length)];
+        if (a.cool > 0 || !foe) return;
+        const [wx, wy] = a.win;
+        this.arrows.push(new TA.Arrow(b.x + wx, wy, foe, 1 + Math.floor(this.tools.scythe / 2)));
+        a.cool = 1.6 + Math.random() * 0.3; a.shot = 0; a.dir = Math.sign(foe.x - b.x) || 1;
+      });
     }
     for (const a of this.arrows) a.update(dt, this);
     this.arrows = this.arrows.filter(a => !a.done);
@@ -533,22 +827,37 @@ TA.Game = class {
     for (const d of this.drops) {
       d.t += dt;
       if (d.y > 0 || d.vy > 0) { d.vy -= 220 * dt; d.x += d.vx * dt; d.y = Math.max(0, d.y + d.vy * dt); if (d.y === 0) { d.vy = 0; d.vx = 0; } }
+      if (Math.abs(d.base - p.y) > 18) continue;
       const dx = p.x - d.x;
       if (d.t > 0.45 && p.alive && Math.abs(dx) < 34) d.x += Math.sign(dx) * Math.min(Math.abs(dx), 120 * dt);
       if (d.t > 0.45 && p.alive && Math.abs(dx) < 4) { d.taken = true; this.give(d.item, 1); }
     }
     this.drops = this.drops.filter(d => !d.taken && d.t < 120);
 
-    // region change banner
-    const reg = this.world.regionOf(p.x);
-    if (reg !== this.lastRegion) {
-      const b = this.world.biomeOfRegion(reg);
-      if (this.lastRegion !== null && b !== this.world.biomeOfRegion(this.lastRegion)) this.ui.biomeBanner(TA.BIOMES[b].name, TA.BIOMES[b].color);
-      this.lastRegion = reg;
+    // region change banners
+    if (p.layer === 's') {
+      if (this.lastCave) { this.lastCave = null; this.tutorial.climbed = true; }
+      const reg = this.world.regionOf(p.x);
+      if (reg !== this.lastRegion) {
+        const b = this.world.biomeOfRegion(reg);
+        if (this.lastRegion !== null && b !== this.world.biomeOfRegion(this.lastRegion)) this.ui.biomeBanner(TA.BIOMES[b].name, TA.BIOMES[b].color);
+        this.lastRegion = reg;
+      }
+    } else {
+      const cb = this.world.caveBiomeAt(p.x);
+      if (cb !== this.lastCave) { this.ui.biomeBanner(TA.CAVE_BIOMES[cb].name, TA.CAVE_BIOMES[cb].color, 'underground'); this.lastCave = cb; this.tutorial.cave = true; }
     }
     const night = this.isNight();
-    if (night && !this.wasNight) this.ui.toast('Night falls. Creatures stir in the dark.', 'warn');
+    if (night && !this.wasNight && p.layer === 's') this.ui.toast('Night falls. Creatures stir in the dark.', 'warn');
     this.wasNight = night;
+
+    // lightning in storms
+    const w = this.weatherNow();
+    if (w.def.lightning && w.k > 0.5 && p.layer === 's') {
+      this.boltT -= dt;
+      if (this.boltT <= 0) { this.flash = 0.7; this.boltT = 5 + Math.random() * 12; }
+    }
+    this.flash = Math.max(0, this.flash - dt * 1.8);
 
     this.fx.update(dt);
     this.shake = Math.max(0, this.shake - dt * 10);
