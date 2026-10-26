@@ -75,7 +75,7 @@ TA.UI = class {
     const wx = w.k > 0.2 && w.def.name ? `<span class="wx ${w.type}">${w.def.name}</span>` : '';
     this.set('clock', `${TA.iconHTML(night ? 'moon' : 'sun', 16)}<b>Day ${g.day}</b><span>${TA.fmtTime(g.time)}</span>${wx}`);
     this.set('coins', `${TA.iconHTML('coin', 16)}<b data-item="coin">${inv.coin || 0}</b>`);
-    const res = ['wood', 'stone', 'fiber', 'gem'].map(k => `<span class="res" data-item="${k}" title="${TA.ITEMS[k].name}">${TA.iconHTML(k, 16)}${inv[k] || 0}</span>`).join('');
+    const res = ['wood', 'stone', 'dirt', 'fiber', 'gem'].map(k => `<span class="res" data-item="${k}" title="${TA.ITEMS[k].name}">${TA.iconHTML(k, 16)}${inv[k] || 0}</span>`).join('');
     const prod = [...TA.CROP_ORDER, 'mushroom', 'meat', 'potion'].filter(k => inv[k] > 0)
       .map(k => `<span class="res" data-item="${k}" title="${TA.ITEMS[k].name}">${TA.iconHTML(k, 16)}${inv[k]}</span>`).join('');
     this.set('res', res + (prod ? `<i class="sep"></i>${prod}` : ''));
@@ -103,7 +103,8 @@ TA.UI = class {
     if (!g.has('lighttower')) return 'A light tower keeps night creatures away from your fields.';
     const m = g.buildings.find(b => b.type === 'market');
     if (m && !g.tutorial.stall && !Object.keys(m.stock).length) return 'Stock your market stall. Travellers passing by will buy from it.';
-    if (g.underground && !g.tutorial.climbed) return `Jump (${this.touch ? 'the ▲ button' : '<kbd>W</kbd> / <kbd>Space</kbd>'}) up the ledges to the light to climb back out.`;
+    if (g.underground && !g.tutorial.dug) return this.touch ? 'Hold a block to dig it out. Tap an empty spot to build with dirt or stone.' : 'Hold <kbd>E</kbd> or click a block to dig (<kbd>↓</kbd> / <kbd>↑</kbd> aim down / up). <kbd>R</kbd> or right-click builds.';
+    if (g.underground && !g.tutorial.climbed) return `Jump (${this.touch ? 'the ▲ button' : '<kbd>W</kbd> / <kbd>Space</kbd>'}) up the ledges to the light to climb back out, or build your way up.`;
     return '';
   }
 
@@ -319,7 +320,8 @@ TA.UI = class {
       <div class="help">
         <div><kbd>A</kbd><kbd>D</kbd> / <kbd>←</kbd><kbd>→</kbd> walk &nbsp; <kbd>Shift</kbd> run</div>
         <div><kbd>W</kbd> / <kbd>Space</kbd> jump &nbsp; <kbd>S</kbd> drop through a ledge</div>
-        <div><kbd>E</kbd> / <kbd>Enter</kbd> do the thing in front of you</div>
+        <div><kbd>E</kbd> / <kbd>Enter</kbd> do the thing in front of you (hold to dig)</div>
+        <div>Click a block to dig it, right-click or <kbd>R</kbd> to build &nbsp; <kbd>↓</kbd><kbd>↑</kbd> aim digging</div>
         <div><kbd>B</kbd> build &nbsp; <kbd>Q</kbd> switch seed &nbsp; <kbd>F</kbd> eat</div>
       </div>
       <button class="wide" data-act="resume">Resume</button>
@@ -358,7 +360,8 @@ TA.UI = class {
     }
     // the down button also drops through ledges on a tap
     const dn = this.$('t-down'); if (dn) dn.addEventListener('pointerdown', () => TA.input.press('down'));
-    tap('t-action', 'action'); tap('t-build', 'build'); tap('t-eat', 'eat'); tap('t-menu', 'menu');
+    hold('t-action', 'action'); tap('t-action', 'action'); // a tap acts, holding keeps digging
+    tap('t-build', 'build'); tap('t-eat', 'eat'); tap('t-menu', 'menu');
     tap('seed', 'seed');
   }
 };

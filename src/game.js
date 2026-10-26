@@ -52,6 +52,8 @@ TA.Game = class {
     const sp = s ? s.player : null;
     this.player = new TA.Player(sp ? sp.x : 18, sp ? sp.y || 0 : 0, sp ? sp.layer || 's' : 's');
     if (sp) this.player.hp = sp.hp;
+    // a save from before the block world could leave the player inside rock
+    if (TA.bodyHits(this.world, this.player.x, this.player.y)) { this.player.y = 0; this.player.layer = 's'; }
     this.inv = s ? s.inv : { coin: 8, seed_wheat: 4, seed_carrot: 2 };
     this.tools = s ? s.tools : { scythe: 0, axe: 0, pick: 0 };
     this.selectedSeed = s ? s.selectedSeed : 'wheat';
@@ -363,6 +365,12 @@ TA.Game = class {
       if (obj.kind === 'glow') return { label: 'Gather glowbloom', icon: 'berry', run: () => this.forage(obj) };
       if (obj.kind === 'wildcrop') return { label: 'Gather wild moonflower', icon: 'moonflower', run: () => this.forage(obj) };
     }
+    // dig below / above while holding ↓ / ↑
+    const inp = this.input;
+    if (inp.isDown('down') || inp.isDown('up')) {
+      const aim = this.aimCell(false);
+      if (aim) return { label: `Dig ${TA.BLOCKS[aim.t].name.toLowerCase()}`, icon: 'pick', dig: aim, run: () => { } };
+    }
     // till new field on your land
     if (L === 's' && p.onGround && this.inClaim(fx)) {
       const blockB = this.buildingAt(slot, 4);
@@ -371,6 +379,9 @@ TA.Game = class {
       if (!blockB && !blockN && !flag && Math.abs(slot - this.claim.x) < this.claim.r - 20)
         return { label: 'Till soil', icon: 'hoe', slot, run: () => this.till(slot) };
     }
+    // dig into the wall in front
+    const aim = this.aimCell(false);
+    if (aim) return { label: `Dig ${TA.BLOCKS[aim.t].name.toLowerCase()}`, icon: 'pick', dig: aim, run: () => { } };
     return { label: 'Swing', icon: 'scythe', run: () => this.swing(), quiet: true };
   }
   doAction() {
@@ -473,6 +484,95 @@ TA.Game = class {
     d.adopted = true; d.state = 'follow';
     this.dog = d;
     this.ui.toast('A loyal friend joins you!', 'good');
+  }
+
+  // ------------------------------------------------------------ digging and building
+  // Hold the mouse or a finger on a block in reach, or hold E at the block in
+  // front (↓ / ↑ aim below / above), to dig it out. R, a right click, or a
+  // finger on an empty spot places dirt (or stone, when out of dirt).
+  inReach(c, r) { const p = this.player; return Math.hypot(c * 8 + 4 - p.x, r * 8 + 4 - (p.y + 7)) <= TA.REACH; }
+  pointerCell() {
+    const R = TA.renderer, inp = this.input;
+    if (!R || !inp.aiming || this.ui.modal) return null;
+    const c = Math.floor((R.camX + inp.pointer.x / R.scale) / 8), r = Math.floor((R.baseY - inp.pointer.y / R.scale) / 8);
+    return this.inReach(c, r) ? { c, r, t: this.world.cell(c, r) } : null;
+  }
+  // The block the keyboard aims at: in front (the lower one first), below or above
+  aimCell(placing) {
+    const p = this.player, inp = this.input;
+    if (!p.alive) return null;
+    const cx = Math.floor(p.x / 8), r0 = Math.floor((p.y + 0.01) / 8), r1 = Math.floor((p.y + TA.PLAYER_H - 0.01) / 8);
+    const fc = Math.floor((p.x + p.dir * (TA.BODY_HW + 3)) / 8);
+    const cells = inp.isDown('down') ? [[cx, r0 - 1]] : inp.isDown('up') ? [[cx, r1 + 1]] : [[fc, r0], [fc, r1]];
+    for (const [c, r] of cells) {
+      const t = this.world.cell(c, r);
+      if (placing ? t === TA.CELL.AIR : this.canDig(c, r)) return { c, r, t };
+    }
+    return null;
+  }
+  canDig(c, r) {
+    const t = this.world.cell(c, r);
+    if (!(TA.SOLID[t] || t === TA.CELL.LEDGE) || t === TA.CELL.BEDROCK) return false;
+    if (r === -1 || r === -2) {
+      // the ground's crust: not in towns, thickets, fields or under buildings and things standing on it
+      const x = c * 8 + 4, w = this.world;
+      if (w.poiAt(x, 4) || w.bordersIn(x - 70, x + 70).some(b => Math.abs(b.x - x) < 64)) return false;
+      if (this.buildingAt(x, 4) || this.plots.some(pl => Math.abs(pl.x - x) < 12)) return false;
+      const grass = o => o.kind === 'decor' && !o.spr.startsWith('tree_');
+      if (w.objectsIn(x - 24, x + 24, 's').some(o => !grass(o) && !o.back && Math.abs(o.x - x) < Math.max(6, TA.objW(o) / 2))) return false;
+    }
+    return true;
+  }
+  updateDigging(dt) {
+    const p = this.player, inp = this.input, pc = this.pointerCell();
+    if (this.ui.modal) { this.digging = null; return; }
+    // building
+    if (inp.hit('place')) { const a = pc && pc.t === TA.CELL.AIR ? pc : this.aimCell(true); if (a) this.placeBlock(a.c, a.r); }
+    if (inp.pointer.hit && pc && (inp.pointer.button === 2 || (inp.pointer.touch && pc.t === TA.CELL.AIR))) this.placeBlock(pc.c, pc.r);
+    // digging
+    let tgt = null;
+    if (inp.pointer.down && inp.pointer.button === 0 && pc && this.canDig(pc.c, pc.r)) tgt = pc;
+    else if (inp.isDown('action') && this.ui.target && this.ui.target.dig) tgt = this.ui.target.dig;
+    if (!tgt || !p.alive || p.state !== 'free') { this.digging = null; return; }
+    if (!this.digging || this.digging.c !== tgt.c || this.digging.r !== tgt.r) this.digging = { c: tgt.c, r: tgt.r, t: 0 };
+    const t = this.world.cell(tgt.c, tgt.r), x = tgt.c * 8 + 4;
+    this.digging.t += dt * (1 + 0.6 * this.tools.pick) / TA.BLOCKS[t].hard;
+    if (Math.abs(x - p.x) > 2) p.dir = Math.sign(x - p.x);
+    if (Math.random() < dt * 10) this.fx.burst(x, tgt.r * 8 + 4, TA.BLOCK_FX[t], 1, 30);
+    if (this.digging.t >= 1) { this.breakCell(tgt.c, tgt.r); this.digging = null; }
+  }
+  breakCell(c, r) {
+    const w = this.world, t = w.cell(c, r), x = c * 8 + 4;
+    w.setCell(c, r, TA.CELL.AIR);
+    const base = w.floorBelow(x, r * 8 + 4);
+    for (const [item, v] of Object.entries(TA.BLOCKS[t].drop)) {
+      const n = Array.isArray(v) ? v[0] + Math.floor(Math.random() * (v[1] - v[0] + 1)) : v < 1 ? (Math.random() < v ? 1 : 0) : v;
+      if (n) this.dropItem(x, item, n, base);
+    }
+    this.fx.burst(x, r * 8 + 4, TA.BLOCK_FX[t], 8, 50);
+    // whatever stood on the block or hung under it
+    for (const o of w.objectsIn(x - 8, x + 8, null)) {
+      if (o.gone || Math.abs(o.x - x) > 4) continue;
+      const on = !o.hang && (o.y || 0) === (r + 1) * 8, under = o.hang && o.y === r * 8;
+      if (!on && !under) continue;
+      if (o.kind === 'chest' || o.kind === 'portal' || o.kind === 'mobs') o.y = w.floorBelow(o.x, o.y);
+      else w.remove(o, this.day, true);
+    }
+    this.tutorial.dug = true;
+  }
+  placeBlock(c, r) {
+    const w = this.world;
+    if (w.cell(c, r) !== TA.CELL.AIR || r > 24 || !this.inReach(c, r)) return;
+    const item = (this.inv.dirt || 0) > 0 ? 'dirt' : (this.inv.stone || 0) > 0 ? 'stone' : null;
+    if (!item) { this.ui.toast('Nothing to build with. Dig some dirt or stone.'); return; }
+    // never inside anyone
+    const x0 = c * 8, y0 = r * 8;
+    const bodies = [this.player, this.dog, ...this.mobs.filter(m => !m.dead)].filter(Boolean);
+    if (bodies.some(b => b.x + TA.BODY_HW > x0 && b.x - TA.BODY_HW < x0 + 8 && b.y + TA.PLAYER_H > y0 && b.y < y0 + 8)) return;
+    const C = TA.CELL;
+    w.setCell(c, r, r === -1 || r === -2 ? C.GROUND : item === 'dirt' ? C.DIRT : C.STONE);
+    this.inv[item]--;
+    this.fx.burst(c * 8 + 4, r * 8 + 4, TA.BLOCK_FX[item === 'dirt' ? C.DIRT : C.STONE], 4, 30);
   }
 
   // ------------------------------------------------------------ borders
@@ -590,8 +690,8 @@ TA.Game = class {
         const lvl = this.world.danger(o.x);
         const sp = { mobs: [], poi: poiId, home: o.x, layer: o.layer || 's' };
         o.mobs.forEach((t, i) => {
-          const x = o.x + (i - o.mobs.length / 2) * 14;
-          const m = new TA.Mob(t, x, { poi: poiId, level: lvl, layer: sp.layer, y: this.world.groundAt(x, sp.layer) });
+          const x = o.x + (i - o.mobs.length / 2) * (sp.layer === 'c' ? 2 : 14); // underground, keep to the lair's own block
+          const m = new TA.Mob(t, x, { poi: poiId, level: lvl, layer: sp.layer, y: this.world.floorBelow(x, (o.y || 0) + 4) });
           sp.mobs.push(m); this.mobs.push(m);
         });
         this.active.set(o.id, sp);
@@ -644,8 +744,10 @@ TA.Game = class {
       this.spawnT = Math.max(9, 22 - danger * 2);
       if (this.mobs.filter(m => m.nightSpawn && !m.dead).length >= 1 + Math.ceil(danger / 2)) return;
       if (this.world.shaftAt(x, 60)) return;
-      const list = TA.CAVE_BIOMES[this.world.caveBiomeAt(x)].mobs;
-      this.mobs.push(new TA.Mob(list[Math.floor(Math.random() * list.length)], x, { night: true, level: danger, layer: 'c', y: this.world.floorAt(x) }));
+      const cx = Math.floor(x / 8) * 8 + 4, y = this.world.caveFloorNear(cx, p.y);
+      if (y === null || Math.abs(y - p.y) > 80) return;
+      const list = TA.CAVE_BIOMES[this.world.caveBiomeAt(cx)].mobs;
+      this.mobs.push(new TA.Mob(list[Math.floor(Math.random() * list.length)], cx, { night: true, level: danger, layer: 'c', y }));
       return;
     }
     const biome = TA.BIOMES[this.world.biomeAt(x)];
@@ -679,6 +781,7 @@ TA.Game = class {
     this.advanceTime(dt * 24 / TA.DAY_SECONDS);
     this.growCrops(dt);
     p.update(dt, this);
+    this.updateDigging(dt);
     this.checkBorder();
     this.stream();
 

@@ -3,7 +3,7 @@
 // through an integer scale transform, with positions snapped to screen pixels
 // (TA.px) so motion is smooth while the art stays crisp.
 // The world is one space: sky above the ground, solid earth below it, and the
-// caves carved out of the earth TA.CAVE_DEPTH down. It is drawn back to front:
+// block grid of earth and caverns beneath it (see World). It is drawn back to front:
 // sky, cave air, back row, earth, ground, street, actors, foreground, light,
 // weather. The camera follows the player down a shaft and back up.
 // ============================================================================
@@ -117,7 +117,9 @@ TA.Renderer = class {
   updateCamera(game, dt) {
     const p = game.player;
     const k = 1 - Math.exp(-dt * 4.5); // frame-rate independent easing
-    game.camX += (p.x + p.dir * 20 - game.camX) * k;
+    // look ahead the way the player last walked, not the way they face, so turning
+    // to dig or fight doesn't slide the view (and the block under the mouse) away
+    game.camX += (p.x + (p.lead ?? p.dir) * 20 - game.camX) * k;
     // On the surface the ground sits near the bottom of the screen. Below it, the
     // view sinks with the player (a little above centre); it follows falls quickly
     // and climbs lazily, so jumps don't bob the screen.
@@ -343,13 +345,15 @@ TA.Renderer = class {
     }
   }
 
-  // The ground: a crust of tiles over the earth, holed at every shaft
+  // The ground: a crust of tiles over the earth, cut away wherever its blocks
+  // have been dug out (or a shaft goes down)
   drawGround(ctx, game, camX) {
-    const gy = this.baseY, W = this.w;
+    const gy = this.baseY, W = this.w, w = game.world, C = TA.CELL;
     const t0 = Math.floor(camX / 16) - 1, t1 = Math.floor((camX + W) / 16) + 1;
-    const holes = this.shaftsInView(game, camX);
+    const c0 = Math.floor(camX / 8) - 1, c1 = Math.floor((camX + W) / 8) + 1;
     ctx.save(); ctx.beginPath(); ctx.rect(-8, gy - 2, W + 16, TA.CRUST + 4);
-    for (const s of holes) ctx.rect(TA.px(s.x - TA.HOLE - camX), gy - 2, TA.HOLE * 2, TA.CRUST + 4);
+    for (let c = c0; c <= c1; c++) for (const r of [-1, -2])
+      if (w.cell(c, r) !== C.GROUND) ctx.rect(TA.px(c * 8 - camX), this.Y(r * 8 + 8) - (r === -1 ? 2 : 0), 8, r === -1 ? 10 : 8);
     ctx.clip('evenodd');
     for (let t = t0; t <= t1; t++) {
       const x = t * 16;
@@ -358,11 +362,10 @@ TA.Renderer = class {
       ctx.drawImage(im, v * 16, 0, 16, 16, TA.px(x - camX), gy, 16, 16);
     }
     ctx.restore();
-    // hole rims, and the trapdoor planks you drop through
-    for (const s of holes) {
-      const L = TA.px(s.x - TA.HOLE - camX), R = L + TA.HOLE * 2;
-      ctx.fillStyle = '#2e222f'; ctx.fillRect(L - 1, gy, 1, TA.CRUST); ctx.fillRect(R, gy, 1, TA.CRUST);
-      for (let x = L; x < R; x += 4) {
+    // the trapdoor planks you drop through
+    for (let c = c0; c <= c1; c++) if (w.cell(c, -1) === C.LEDGE) {
+      const X = TA.px(c * 8 - camX);
+      for (let x = X; x < X + 8; x += 4) {
         ctx.fillStyle = '#805c45'; ctx.fillRect(x, gy, 3, 2);
         ctx.fillStyle = '#4d3729'; ctx.fillRect(x, gy + 2, 3, 1);
       }
@@ -402,7 +405,7 @@ TA.Renderer = class {
     // daylight falling down the shafts
     const day = 1 - game.darkness() / 0.62;
     for (const s of this.shaftsInView(game, camX)) {
-      const x = s.x - camX, y0 = this.baseY, bottom = this.Y(game.world.floorAt(s.x));
+      const x = s.x - camX, y0 = this.baseY, bottom = this.Y(s.bottom);
       const g = ctx.createLinearGradient(0, y0, 0, bottom);
       g.addColorStop(0, `rgba(255,236,190,${0.08 + 0.2 * day})`); g.addColorStop(1, 'rgba(255,236,190,0)');
       ctx.fillStyle = g; ctx.fillRect(TA.px(x - 12), y0, 24, bottom - y0);
@@ -414,36 +417,65 @@ TA.Renderer = class {
       for (const s of w.shaftsOfRegion(i)) if (s.x > camX - 60 && s.x < camX + this.w + 60) out.push(s);
     return out;
   }
-  // The earth, autotiled from the cave tileset (see tilePiece).
+  // The block grid, autotiled from the cave tileset (see tilePiece). Dirt has its
+  // own recolour, stone takes the cave biome's, ore and gems are stone with
+  // flecks, bedrock is stone in shadow. The ground's crust is drawn by drawGround;
+  // here a dug-out crust block only gets the cave's air colour behind it.
   drawCaveRock(game, camX) {
     const ctx = this.ctx, w = game.world, im = TA.img.caveTiles; if (!im) return;
+    const C = TA.CELL;
     const c0 = Math.floor(camX / 8) - 1, c1 = Math.floor((camX + this.w) / 8) + 1;
-    const F = {}, C = {};
-    for (let c = c0 - 2; c <= c1 + 2; c++) { F[c] = w.floorCol(c); C[c] = w.ceilCol(c); }
-    // the ground above counts as rock here, so only cave air puts a rim on a face
-    const solid = (c, r) => { const y0 = r * 8; return y0 >= 0 || y0 + 8 <= F[c] || y0 >= C[c]; };
-    // rows on screen, bottom to top; the ground tiles cover the crust (rows -1, -2)
-    const rLo = Math.floor((this.baseY - this.h) / 8) - 1, rHi = Math.min(-2, Math.ceil(this.baseY / 8));
+    const rLo = Math.max(TA.BEDROCK_ROW - 2, Math.floor((this.baseY - this.h) / 8) - 1), rHi = Math.ceil(this.baseY / 8) + 1;
+    const solid = (c, r) => TA.SOLID[w.cell(c, r)];
+    const bg = TA.CAVE_BIOMES[w.caveBiomeAt(camX + this.w / 2)].bg;
     for (let c = c0; c <= c1; c++) {
       const X = TA.px(c * 8 - camX);
-      const pal = TA.CAVE_BIOMES[w.caveBiomeVis(c * 8 + 4)].pal * 48;
+      const stone = TA.CAVE_BIOMES[w.caveBiomeVis(c * 8 + 4)].pal * 48;
       for (let r = rLo; r <= rHi; r++) {
-        if (!solid(c, r)) continue;
-        // under the crust only draw where it overhangs a shaft
-        if (r === -2 && solid(c, r - 1)) continue;
+        const t = w.cell(c, r), Y = this.Y(r * 8 + 8);
+        if (r === -1 || r === -2) { if (t !== C.GROUND) { ctx.fillStyle = bg; ctx.fillRect(X, Y, 8, 8); } continue; }
+        if (t === C.AIR) continue;
+        if (t === C.LEDGE) {
+          const left = w.cell(c - 1, r) !== C.LEDGE, right = w.cell(c + 1, r) !== C.LEDGE;
+          const hx = left ? 0 : right ? 40 : 16 + 8 * (c & 1);
+          // a thin plank: the rim's top three rows over its very last row
+          ctx.drawImage(im, 32 + hx, stone, 8, 3, X, Y, 8, 3);
+          ctx.drawImage(im, 32 + hx, stone + 47, 8, 1, X, Y + 3, 8, 1);
+          continue;
+        }
         const [hx, vy] = this.tilePiece(solid, c, r);
-        ctx.drawImage(im, 32 + hx, pal + vy, 8, 8, X, this.Y(r * 8 + 8), 8, 8);
+        ctx.drawImage(im, 32 + hx, (t === C.DIRT ? TA.DIRT_PAL * 48 : stone) + vy, 8, 8, X, Y, 8, 8);
+        if (t === C.ORE || t === C.GEM) {
+          // flecks of gold or gems, the same for a block every time
+          const h = TA.hash(c, r, 99);
+          ctx.fillStyle = t === C.ORE ? '#f9c22b' : '#30e1b9';
+          ctx.fillRect(X + 1 + (h & 3), Y + 2 + ((h >>> 2) & 3), 1, 1);
+          ctx.fillRect(X + 4 + ((h >>> 4) & 1), Y + 5 - ((h >>> 5) & 1), 2, 1);
+          if (t === C.GEM) { ctx.fillStyle = '#8ff8e2'; ctx.fillRect(X + 2 + ((h >>> 6) & 3), Y + 1 + ((h >>> 8) & 1), 1, 1); }
+        } else if (t === C.BEDROCK) { ctx.fillStyle = 'rgba(10,6,16,0.55)'; ctx.fillRect(X, Y, 8, 8); }
       }
     }
-    // ledges: a thin slab cut from the top and bottom rims, capped at the ends
-    for (const pl of w.platformsIn(camX - 8, camX + this.w + 8)) {
-      const pal = TA.CAVE_BIOMES[w.caveBiomeVis((pl.x0 + pl.x1) / 2)].pal * 48, y = this.Y(pl.y);
-      for (let x = pl.x0, k = 0; x < pl.x1; x += 8, k++) {
-        const tw = Math.min(8, pl.x1 - x), last = x + 8 >= pl.x1;
-        const hx = k === 0 ? 0 : last ? 48 - tw : 16 + 8 * (k & 1);
-        ctx.drawImage(im, 32 + hx, pal, tw, 4, TA.px(x - camX), y, tw, 4);
-        ctx.drawImage(im, 32 + hx, pal + 44, tw, 4, TA.px(x - camX), y + 4, tw, 4);
-      }
+    this.drawDigging(ctx, game, camX);
+  }
+  // What you are aiming at, and the cracks in the block you are digging
+  drawDigging(ctx, game, camX) {
+    const box = (c, r, col) => {
+      const X = TA.px(c * 8 - camX), Y = this.Y(r * 8 + 8);
+      ctx.fillStyle = col;
+      ctx.fillRect(X, Y, 8, 1); ctx.fillRect(X, Y + 7, 8, 1); ctx.fillRect(X, Y + 1, 1, 6); ctx.fillRect(X + 7, Y + 1, 1, 6);
+    };
+    if (!game.pointerCell) return; // the title screen
+    const pc = game.pointerCell();
+    if (pc) {
+      if (game.canDig(pc.c, pc.r)) box(pc.c, pc.r, 'rgba(255,255,255,0.6)');
+      else if (pc.t === TA.CELL.AIR && ((game.inv.dirt || 0) > 0 || (game.inv.stone || 0) > 0)) box(pc.c, pc.r, 'rgba(145,219,105,0.45)');
+    } else if (game.ui.target && game.ui.target.dig) box(game.ui.target.dig.c, game.ui.target.dig.r, 'rgba(255,255,255,0.45)');
+    const d = game.digging;
+    if (d) {
+      const X = TA.px(d.c * 8 - camX), Y = this.Y(d.r * 8 + 8), n = Math.ceil(d.t * 6);
+      ctx.fillStyle = 'rgba(20,12,24,0.8)';
+      const cracks = [[3, 3], [4, 4], [2, 4], [5, 2], [4, 5], [1, 2], [6, 5], [3, 6], [5, 6], [2, 1], [6, 2], [1, 5]];
+      for (let k = 0; k < Math.min(cracks.length, n * 2); k++) ctx.fillRect(X + cracks[k][0], Y + cracks[k][1], 1, 1);
     }
   }
 
@@ -522,7 +554,7 @@ TA.Renderer = class {
     }
     // daylight down the shafts
     for (const s of this.shaftsInView(game, camX))
-      for (let y = Math.max(this.baseY, -24); y < Math.min(H, this.Y(game.world.floorAt(s.x))); y += 24) lights.push([s.x, y, 6 + 24 * (1 - sd)]);
+      for (let y = Math.max(this.baseY, -24); y < Math.min(H, this.Y(s.bottom)); y += 24) lights.push([s.x, y, 6 + 24 * (1 - sd)]);
     for (const b of game.buildings) {
       if (!b.built) continue;
       if (b.type === 'lighttower') lights.push([b.x, this.baseY - 40, 110]);

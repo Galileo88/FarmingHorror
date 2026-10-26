@@ -13,18 +13,39 @@ TA.CLAIM_RADIUS = 176;         // land claimed by a banner, each side
 TA.BORDER = 30;                // walkers stop this far from a biome border, inside its thicket
 TA.STALL_PREMIUM = 1.25;       // travellers pay this much over market price at your stall
 
-// Movement (px, px/s, px/s^2). Heights are measured up from the surface, or
-// up from the bottom of the caves when underground.
+// Movement (px, px/s, px/s^2). Heights are world heights: 0 is the surface,
+// the underground is negative.
 TA.GRAVITY = 420;
-TA.JUMP_V = 172;               // apex ~35px: clears a 24px ledge, not a 32px one
-TA.STEP_UP = 8;                // ledges this low are walked onto
-TA.PLAYER_H = 13;
-// The caves lie this far below the surface, in the same space: the ground is a
-// TA.CRUST thick crust over solid earth, and shafts are holes TA.HOLE either side
-// of their centre, covered by a trapdoor you drop through.
-TA.CAVE_DEPTH = 240;
+TA.JUMP_V = 151;               // apex ~27px: clears 3 blocks, not 4
+TA.STEP_UP = 8;                // a single block is walked onto
+TA.PLAYER_H = 13;              // fits a 2-block tunnel
+TA.BODY_HW = 3;                // half width of a body, for hitting blocks
+
+// ---------------------------------------------------------------- the block grid
+// Underground is a grid of 8px blocks; row r covers heights [r*8, r*8 + 8). Rows
+// -1 and -2 are the ground's crust (TA.CRUST thick), then dirt, then stone with
+// ore, down to bedrock. Shafts are holes TA.HOLE either side of their centre,
+// with a trapdoor (a ledge in the top crust row) and a ledge every 3 rows.
 TA.CRUST = 16;
 TA.HOLE = 12;
+TA.CELL = { AIR: 0, GROUND: 1, DIRT: 2, STONE: 3, ORE: 4, GEM: 5, BEDROCK: 6, LEDGE: 7 };
+TA.SOLID = [false, true, true, true, true, true, true, false];
+TA.BEDROCK_ROW = -90;          // this row and below can't be dug
+TA.SHAFT_ROOM = -30;           // top row of the room at the bottom of every shaft
+TA.PORTAL_FLOOR = -40;         // floor row of the rooms that hold cave portals
+// name, seconds to dig with a basic pickaxe, what it drops
+TA.BLOCKS = [
+  null,
+  { name: 'Soil', hard: 0.4, drop: { dirt: 1 } },
+  { name: 'Dirt', hard: 0.35, drop: { dirt: 1 } },
+  { name: 'Stone', hard: 0.9, drop: { stone: 1 } },
+  { name: 'Ore', hard: 1.1, drop: { stone: 1, coin: [1, 3], gem: 0.25 } },
+  { name: 'Gem vein', hard: 1.4, drop: { gem: 1, coin: [2, 5] } },
+  { name: 'Bedrock', hard: Infinity, drop: {} },
+  { name: 'Ledge', hard: 0.2, drop: { wood: 1 } },
+];
+TA.BLOCK_FX = [null, '#674937', '#674937', '#7f708a', '#9babb2', '#30e1b9', '#2e222f', '#805c45']; // dust colours
+TA.REACH = 22;                 // how far from the player's middle a block can be dug or placed
 
 // ---------------------------------------------------------------- images
 TA.IMAGES = {
@@ -217,12 +238,13 @@ TA.CROP_ORDER = ['wheat', 'carrot', 'pumpkin', 'berry', 'moonflower'];
 
 // icon: ['icons', index] in the generated sheet or a standalone image key
 TA.ICON_NAMES = ['wood', 'stone', 'fiber', 'wheat', 'carrot', 'pumpkin', 'berry', 'moonflower', 'heart', 'heart_empty',
-  'hoe', 'scythe', 'axe', 'pick', 'can', 'banner', 'sun', 'moon',
+  'hoe', 'scythe', 'axe', 'pick', 'can', 'banner', 'sun', 'moon', 'dirt',
   'seed_wheat', 'seed_carrot', 'seed_pumpkin', 'seed_berry', 'seed_moonflower'];
 TA.ITEMS = {
   coin: { name: 'Coins', img: 'coin' },
   wood: { name: 'Wood', icon: 'wood', sell: 1 },
   stone: { name: 'Stone', icon: 'stone', sell: 1 },
+  dirt: { name: 'Dirt', icon: 'dirt' },
   fiber: { name: 'Fiber', icon: 'fiber', sell: 1 },
   gem: { name: 'Gem', img: 'gem', sell: 30 },
   mushroom: { name: 'Mushroom', img: 'mushroom', sell: 4 },
@@ -277,7 +299,8 @@ TA.BIOMES = {
 };
 
 // Underground biomes. pal = which recolour of the cave tileset (rows of
-// assets/art/cave_tiles.png); bg = the colour of open cave air.
+// assets/art/cave_tiles.png) their stone uses; bg = the colour of open cave air.
+TA.DIRT_PAL = 4;  // the dirt recolour
 // rocks / blooms / shrooms = how much of each is on the floor, rich = share of gem-rich ore
 TA.CAVE_BIOMES = {
   caverns: { name: 'Echo Caverns', pal: 0, color: '#9babb2', bg: '#17172a', rocks: 0.5, rich: 0.1, blooms: 0.15, shrooms: 0.1, mobs: ['skeleton', 'ratfolk'] },

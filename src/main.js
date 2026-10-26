@@ -91,7 +91,7 @@ window.TA = window.TA || {};
   TA.dbg = {
     give(item, n = 10) { game.give(item, n); },
     time(h) { game.time = h; },
-    tp(x, layer) { const p = game.player; if (layer && layer !== p.layer) { p.layer = layer; game.clearLayer(); } p.x = x; p.y = game.world.groundAt(x, p.layer); game.camX = x; game.camY = Math.min(0, p.y - 12); },
+    tp(x, layer) { const p = game.player; if (layer && layer !== p.layer) { p.layer = layer; game.clearLayer(); } p.x = p.layer === 'c' ? Math.floor(x / 8) * 8 + 4 : x; p.y = p.layer === 'c' ? (game.world.caveFloorNear(p.x, -120) ?? -120) : game.world.floorBelow(x, 1); game.camX = x; game.camY = Math.min(0, p.y - 12); },
     weather(type, from = game.time - 1, to = game.time + 3) { game.weather = { type, from, to }; },
     get game() { return game; },
   };

@@ -16,6 +16,7 @@ can
 banner
 sun
 moon
+dirt
 seed_wheat
 seed_carrot
 seed_pumpkin

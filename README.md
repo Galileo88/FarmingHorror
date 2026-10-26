@@ -21,9 +21,12 @@ Double-clicking `index.html` also works in most browsers. The game saves to the 
 |---|---|---|
 | A / D or ← / → | ◀ ▶ | Walk |
 | Shift | run | Run |
-| W / ↑ / Space | ▲ | Jump (hold for a higher jump) |
-| S / ↓ | ▼ | Drop through a cave trapdoor or a ledge |
-| E / Enter | big button | Do whatever is in front of you (chop, mine, till, plant, water, harvest, trade, talk, attack, sleep, climb down a shaft, use a portal) |
+| W / Space | ▲ | Jump (hold for a higher jump; clears 3 blocks) |
+| S / ↓ | ▼ | Drop through a cave trapdoor or a ledge (hold to keep going down); aim digging down |
+| ↑ | | Aim digging up |
+| E / Enter | big button | Do whatever is in front of you (chop, mine, till, plant, water, harvest, trade, talk, attack, sleep, climb down a shaft, use a portal). Hold it to dig the block in front |
+| Mouse: hold left button on a block | hold a block | Dig it out (it has to be within reach) |
+| R / right click | tap an empty spot | Build a block of dirt (or stone, when you are out of dirt) |
 | B | build | Build menu |
 | Q | tap seed box | Switch seed type |
 | F | eat | Eat food to heal |
@@ -34,7 +37,9 @@ Double-clicking `index.html` also works in most browsers. The game saves to the 
 - **World:** an endless strip split into 2400px biome regions. The biomes are Greenmeadow, Amberwood, Fallen Kingdom, Elderglade and Goblin Barrens, and danger rises with distance from the start. Each region lays out 1 to 3 points of interest at their real size: villages (fields, a market, a woodlot), towns and cities (gates at both ends, a hazy back row of buildings, smithies, plazas), ruins, goblin camps, war camps, bone fields, elder groves, dwarf dig sites and stray dogs. Everything comes from the world seed. The save only stores what you changed (felled trees regrow after a few days).
 - **Biome borders:** where two biomes meet there is a thicket of trees. Walk into it and it hides you, and the game asks **Travel to …?** with **OK** (E / Enter) or **Go back** (Esc). OK fades you through to the far side, into the next land and its own sky.
 - **Townsfolk:** villages have 3 to 5 people, towns 6 to 9 plus guards, cities 12 to 16 plus guards. They stroll, stop to chat with each other, head indoors at night, and some work all day (smiths, farmers, woodcutters, miners). Stand next to one and press E to talk.
-- **Caves:** the caves lie right under the ground, in the same space, and run beneath the whole world. A cave mouth is a shaft with a trapdoor. Stand on it and press ↓ to drop through, and the camera follows you down past the soil and rock into the caverns. Down there are a stepped floor, ledges you can jump onto or drop through, hanging roots, ore, glowing blooms, mushrooms, chests on high ledges, and creatures that hop after you. The rock is autotiled from the cave tileset's nine-slice, so every exposed face gets its rim. To get out, jump up the ledges in a shaft towards the daylight and hop out of the hole. Each region above has its own cave biome: Echo Caverns, Crystal Depths, Fungal Grotto or Bone Pits.
+- **Underground:** under the whole world lies a grid of 8px blocks, in the same space as the surface: the ground's crust, then dirt, then stone with gold ore and, deeper, gem veins, down to bedrock about 720px down. Caverns are carved from 2D noise (more of them the deeper you go) with long winding tunnels between them, dressed with hanging roots, glowing blooms, mushrooms, chests and creature lairs. Each region above has its own cave biome (Echo Caverns, Crystal Depths, Fungal Grotto or Bone Pits) that colours its stone. The rock is autotiled from the cave tileset's nine-slice, so every exposed face, natural or dug, gets its rim.
+- **Digging and building:** dig any block within reach (dirt is quick, stone slower, ore and gems slower still; pickaxe upgrades help). Dirt drops dirt, stone drops stone, ore drops coins and sometimes a gem, gem veins drop gems. Build with dirt or stone: to get out of a pit, jump and put a block under your feet. You can dig down through the ground almost anywhere, but not in towns, under fields, buildings or things standing on it, or in border thickets. Everything you dig or build is saved.
+- **Shafts:** a cave mouth is a shaft with a trapdoor and a ledge every 3 blocks down to a room 270px below. Stand on the trapdoor and press ↓ (hold it to keep dropping), then jump back up the ledges to get out. The camera follows you down and up.
 - **Hidden biomes:** now and then a region is closed in by thickets too dense to cross. The Lost Vale (lush, safe, a hermit trader) and the Ember Crater (rich rock, dangerous) can only be reached by going under them through the caves and climbing out inside, or by a lucky portal.
 - **Portals:** a rare region holds one end of a portal pair. The portal hides in ruins, in a cave or out in the open, and its twin lies 3 to 7 regions away, sometimes inside a hidden biome.
 - **Depth:** some grass, rocks, trees, fences and small buildings stand in front of the path. They turn see-through when they would hide you. Archways (your walls, town gates, ruin gates) put their left half behind you and their right half in front, so you walk through them.
@@ -49,10 +54,10 @@ Double-clicking `index.html` also works in most browsers. The game saves to the 
 | File | What's in it |
 |---|---|
 | `src/data.js` | All tunables: sprite rects, animation rows, biomes, crops, items, buildings, creatures, shops |
-| `src/world.js` | Seeded biome regions, border thickets, POI layouts, cave geometry, shafts, portals, chunk generation |
+| `src/world.js` | Seeded biome regions, border thickets, POI layouts, the block grid (caverns, tunnels, ore, shafts, saved edits), portals, chunk generation |
 | `src/game.js` | Rules: time and weather, the context action, farming, building, tower upgrades, market stall, travellers, cave and portal travel, spawning, saving |
-| `src/entities.js` | Shared jump/fall physics, player, creatures (and their corpses), traders, townsfolk, travellers, dogs, guards, arrows, particles |
-| `src/render.js` | Camera, parallax (each set composited on its own, then blended), ground, back/street/front layers, archways, caves, lighting, weather and colour grading |
+| `src/entities.js` | Box-against-blocks physics, player, creatures (and their corpses), traders, townsfolk, travellers, dogs, guards, arrows, particles |
+| `src/render.js` | Camera, parallax (each set composited on its own, then blended), ground, back/street/front layers, archways, the block grid and dig cracks, lighting, weather and colour grading |
 | `src/ui.js` | DOM HUD, prompts, menus, strip map, touch controls |
 | `tools/build_assets.py` | Copies the sheets the game uses out of `zips/` into `assets/` with clean names (the cave tileset is a RAR, so that step needs `bsdtar` from libarchive-tools) |
 | `tools/make_art.py` | Original crop, soil, icon, campfire and chest pixel art (the packs don't include these), and a recolour of the cave tileset for each cave biome |

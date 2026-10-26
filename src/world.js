@@ -1,10 +1,10 @@
 // ============================================================================
 // Procedural world. The world is an endless strip along x. It is split into
 // biome regions (TA.REGION wide) and generation chunks (TA.CHUNK wide).
-// Under the whole strip, TA.CAVE_DEPTH below the ground, run the caves: a
-// stepped floor with one-way ledges, reached by dropping through a shaft and left
-// by jumping back up it. It is all one space: heights are world heights, 0 is the
-// surface and the caves are negative. Where two biomes meet there is a thicket
+// Under the whole strip lies a grid of blocks (dirt, stone, ore) with caverns and
+// tunnels carved through it, down to bedrock. The player can dig and build in it.
+// Shafts lead down from the surface. It is all one space: heights are world
+// heights, 0 is the surface and the underground is negative. Where two biomes meet there is a thicket
 // you travel through; the thickets around hidden biomes can't be crossed, so
 // those can only be reached from below.
 // Everything is derived from the seed; only changes (felled trees, opened
@@ -31,8 +31,10 @@ TA.World = class {
     this.avoidX = opts.avoidX ?? null;   // the player's claim: never generate a town on top of it
     this.biomeMemo = new Map(); this.poiMemo = new Map(); this.pieceMemo = new Map();
     this.shaftMemo = new Map(); this.portalMemo = new Map(); this.originMemo = new Map();
-    this.floorMemo = new Map(); this.finalMemo = new Map();
-    this.chunks = new Map();          // c -> {objects:[], platforms:[]}
+    this.chunks = new Map();          // c -> {objects:[], cells: Uint8Array}
+    this.edits = (saved && saved.edits) || {};          // "c,r" -> block, dug or built by the player
+    this.sky = new Map();                                // blocks built above the ground
+    for (const [key, t] of Object.entries(this.edits)) { const [c, r] = key.split(',').map(Number); if (r >= 0 && t) this.sky.set(c * 4096 + r, t); }
     this.removed = (saved && saved.removed) || {};     // objectId -> day removed (-1 = permanent)
     this.opened = (saved && saved.opened) || {};       // chestId -> true
     this.cleared = (saved && saved.cleared) || {};     // poiId -> day cleared
@@ -40,7 +42,7 @@ TA.World = class {
     this.explored = (saved && saved.explored) || [0, 0];
   }
   serialize() {
-    return { removed: this.removed, opened: this.opened, cleared: this.cleared, discovered: this.discovered, explored: this.explored };
+    return { removed: this.removed, opened: this.opened, cleared: this.cleared, discovered: this.discovered, explored: this.explored, edits: this.edits };
   }
 
   // ------------------------------------------------------------ biomes
@@ -148,46 +150,103 @@ TA.World = class {
     return pieces;
   }
 
-  // ------------------------------------------------------------ cave geometry
-  // Floor height per 8px column: smooth noise, stepped to 8px, then limited so
-  // neighbouring columns never differ by more than 24px (always jumpable).
-  // rawFloor / naturalFloorCol are measured up from the cave bottom; floorCol,
-  // ceilCol, floorAt and ceilAt return world heights.
-  rawFloor(c) {
-    const v = TA.noise1(this.seed ^ 0x51f, c / 16) * 0.72 + TA.noise1(this.seed ^ 0x2c3, c / 5) * 0.28;
-    return 8 * Math.round(v * 12);
+  // ------------------------------------------------------------ the block grid
+  // See TA.CELL. Every chunk keeps its blocks in a Uint8Array (rows -1 down to
+  // bedrock); blocks above the ground only exist where the player built them.
+  // What the player digs or builds is kept in `edits` ("c,r" -> block) and saved.
+  baseCell(c, r, rooms, dirtDepth) {
+    const C = TA.CELL;
+    if (r >= 0) return C.AIR;
+    if (r <= TA.BEDROCK_ROW) return C.BEDROCK;
+    for (const room of rooms) { const t = room(c, r); if (t !== undefined) return t; }
+    if (r >= -2) return C.GROUND;
+    const d = -r;
+    if (d > 6) {
+      // caverns, opening up with depth, and long winding tunnels between them
+      const n = TA.noise2(this.seed ^ 0x3c1, c / 14, r / 7) * 0.6 + TA.noise2(this.seed ^ 0x77b, c / 5, r / 4) * 0.4;
+      if (n > (d < 16 ? 0.7 - (d - 6) * 0.008 : 0.62)) return C.AIR;
+      if (d > 9 && Math.abs(TA.noise2(this.seed ^ 0x1d9, c / 36, r / 10) - 0.5) < 0.02) return C.AIR;
+    }
+    if (d < dirtDepth) return C.DIRT;
+    const o = TA.noise2(this.seed ^ 0x5e3, c / 3, r / 3);
+    if (d > 30 && o > 0.85) return C.GEM;
+    if (d > 12 && o > 0.79) return C.ORE;
+    return C.STONE;
   }
-  naturalFloorCol(c) {
-    let f = this.floorMemo.get(c);
-    if (f !== undefined) return f;
-    f = 1e9;
-    for (let j = -4; j <= 4; j++) f = Math.min(f, this.rawFloor(c + j) + 24 * Math.abs(j));
-    if (this.floorMemo.size > 20000) this.floorMemo.clear();
-    this.floorMemo.set(c, f);
-    return f;
+  // Hand-carved spaces near chunk c: each a function (col, row) -> block or undefined
+  roomsNear(c0, c1) {
+    const C = TA.CELL, rooms = [];
+    for (let i = this.regionOf(c0 * 8) - 1; i <= this.regionOf(c1 * 8) + 1; i++) {
+      for (const s of this.shaftsOfRegion(i)) {
+        const sc = Math.floor(s.x / 8);
+        if (sc < c0 - 8 || sc > c1 + 8) continue;
+        // the shaft: a trapdoor in the top row of the ground, a ledge every 3
+        // rows, a room at the bottom with a solid floor
+        const R = TA.SHAFT_ROOM, ledge = r => (-1 - r) % 3 === 0;
+        rooms.push((c, r) => {
+          const dc = Math.abs(c - sc);
+          if (dc <= 1 && r <= -1 && r >= R - 4) return ledge(r) ? C.LEDGE : C.AIR;
+          if (dc <= 5 && r <= R && r >= R - 4) return C.AIR;
+          if (dc <= 5 && r === R - 5) return C.STONE;
+        });
+      }
+      for (const pt of this.portalsOfRegion(i)) {
+        if (pt.layer !== 'c') continue;
+        const pc = Math.floor(pt.x / 8), F = TA.PORTAL_FLOOR;
+        if (pc < c0 - 8 || pc > c1 + 8) continue;
+        rooms.push((c, r) => {
+          if (Math.abs(c - pc) > 4) return;
+          if (r === F) return C.STONE;
+          if (r > F && r <= F + 4) return C.AIR;
+        });
+      }
+    }
+    return rooms;
   }
-  // The floor with a flat landing under every shaft (4 columns each side of it),
-  // ramping back down at the usual 24px per column so it stays walkable
-  floorCol(c) {
-    let f = this.finalMemo.get(c);
-    if (f !== undefined) return f;
-    f = this.naturalFloorCol(c) - TA.CAVE_DEPTH;
-    const s = this.shaftAt(c * 8 + 4, 72);
-    if (s) f = Math.max(f, s.base - 24 * Math.max(0, Math.abs(c - Math.floor(s.x / 8)) - 4));
-    if (this.finalMemo.size > 20000) this.finalMemo.clear();
-    this.finalMemo.set(c, f);
-    return f;
+  genCells(ch) {
+    const cols = TA.CHUNK / 8, rows = -TA.BEDROCK_ROW, c0 = ch * cols;
+    const cells = new Uint8Array(cols * rows), rooms = this.roomsNear(c0, c0 + cols - 1);
+    for (let k = 0; k < cols; k++) {
+      const c = c0 + k, dirtDepth = 9 + TA.noise2(this.seed ^ 0x2a4, c / 10, 0) * 5;
+      for (let j = 0; j < rows; j++) cells[k * rows + j] = this.baseCell(c, -1 - j, rooms, dirtDepth);
+    }
+    for (const [key, t] of Object.entries(this.edits)) {
+      const [c, r] = key.split(',').map(Number);
+      if (r < 0 && Math.floor(c / cols) === ch) cells[(c - c0) * rows + (-1 - r)] = t;
+    }
+    return cells;
   }
-  floorAt(x) { return this.floorCol(Math.floor(x / 8)); }
-  // The underside of the earth above a cave column. Shafts are open up to the
-  // crust, and right through it at the hole.
-  ceilCol(c) {
-    const x = c * 8 + 4;
-    const s = this.shaftAt(x, 34);
-    if (s) return Math.abs(x - s.x) < TA.HOLE ? 1e4 : -TA.CRUST;
-    return this.floorCol(c) + 56 + 8 * Math.round(TA.noise1(this.seed ^ 0x7a1, c / 9) * 5);
+  cell(c, r) {
+    if (r >= 0) return this.sky.get(c * 4096 + r) || TA.CELL.AIR;
+    if (r < TA.BEDROCK_ROW) return TA.CELL.BEDROCK;
+    const cols = TA.CHUNK / 8, ch = Math.floor(c / cols);
+    return this.getChunk(ch).cells[(c - ch * cols) * -TA.BEDROCK_ROW + (-1 - r)];
   }
-  ceilAt(x) { return this.ceilCol(Math.floor(x / 8)); }
+  setCell(c, r, t) {
+    this.edits[`${c},${r}`] = t;
+    if (r >= 0) { if (t) this.sky.set(c * 4096 + r, t); else this.sky.delete(c * 4096 + r); return; }
+    const cols = TA.CHUNK / 8, ch = Math.floor(c / cols);
+    this.getChunk(ch).cells[(c - ch * cols) * -TA.BEDROCK_ROW + (-1 - r)] = t;
+  }
+  solidAt(x, y) { return TA.SOLID[this.cell(Math.floor(x / 8), Math.floor(y / 8))]; }
+  // Top of the first block or ledge at or below height y at x
+  floorBelow(x, y) {
+    const c = Math.floor(x / 8);
+    for (let r = Math.floor((y - 0.01) / 8); r >= TA.BEDROCK_ROW; r--) {
+      const t = this.cell(c, r);
+      if (TA.SOLID[t] || t === TA.CELL.LEDGE) return (r + 1) * 8;
+    }
+    return (TA.BEDROCK_ROW + 1) * 8;
+  }
+  // A cave floor near height y at x (an open spot with headroom), or null
+  caveFloorNear(x, y) {
+    const c = Math.floor(x / 8), r0 = Math.floor(y / 8), A = TA.CELL.AIR;
+    for (let d = 0; d < 40; d++) for (const r of [r0 - d, r0 + d]) {
+      if (r > -4 || r <= TA.BEDROCK_ROW + 1) continue;
+      if (this.cell(c, r) === A && this.cell(c, r + 1) === A && TA.SOLID[this.cell(c, r - 1)]) return r * 8;
+    }
+    return null;
+  }
   caveBiomeOfRegion(i) {
     const b = TA.BIOMES[this.biomeOfRegion(i)];
     return TA.rng(TA.hash(this.seed, i, 8080)).weighted(b.cave);
@@ -204,9 +263,8 @@ TA.World = class {
     return TA.hash01(this.seed, Math.floor(x / 8), 61) < w ? right : left;
   }
 
-  // Cave mouths. Each is a shaft: a hole in the ground with a trapdoor, and a
-  // ladder of ledges from a flat landing on the cave floor up to just under the
-  // hole. Regions next to a hidden biome always get one close to its thicket,
+  // Cave mouths. Each is a shaft: a hole in the ground with a trapdoor, a
+  // ledge every 3 blocks down to a room at the bottom (see roomsNear). Regions next to a hidden biome always get one close to its thicket,
   // and hidden biomes get one just inside each of theirs.
   shaftsOfRegion(i) {
     if (this.shaftMemo.has(i)) return this.shaftMemo.get(i);
@@ -236,16 +294,8 @@ TA.World = class {
     return out;
   }
   buildShaft(id, x) {
-    const sc = Math.floor(x / 8);
-    let base = 0;
-    for (let c = sc - 4; c <= sc + 4; c++) base = Math.max(base, this.naturalFloorCol(c));
-    base -= TA.CAVE_DEPTH;
-    // evenly spaced ledges, at most 26px apart, the last one just below the hole
-    const top = -TA.CRUST - 8, n = Math.ceil((top - base) / 26), step = (top - base) / n;
-    const ledges = [];
-    for (let k = 1; k < n; k++) { const cx = x + (k % 2 ? -14 : 14); ledges.push({ x0: cx - 11, x1: cx + 11, y: Math.round(base + step * k) }); }
-    ledges.push({ x0: x - TA.HOLE + 1, x1: x + TA.HOLE - 1, y: top, top: true });
-    return { id, x, base, top, ledges };
+    // the shaft itself is carved into the block grid (roomsNear); bottom = its room's floor
+    return { id, x, bottom: (TA.SHAFT_ROOM - 4) * 8 };
   }
   shaftAt(x, pad = 16) {
     const i = this.regionOf(x);
@@ -280,7 +330,7 @@ TA.World = class {
     for (let k = 0; k < 10; k++) {
       const x = start + r.int(TA.BORDER_CLEAR + 40, TA.REGION - TA.BORDER_CLEAR - 40);
       if (!free(x)) continue;
-      if (roll < 0.78) return { id, x, layer: 'c', y: this.floorAt(x), where: 'cave' };
+      if (roll < 0.78) return { id, x, layer: 'c', y: (TA.PORTAL_FLOOR + 1) * 8, where: 'cave' }; // in a carved room
       return { id, x, layer: 's', y: 0, where: 'wild' };
     }
     return null;
@@ -308,24 +358,6 @@ TA.World = class {
       for (const o of this.getChunk(c).objects) if (!o.gone && (!layer || (o.layer || 's') === layer) && o.x >= x0 - 40 && o.x <= x1 + 40) out.push(o);
     return out;
   }
-  platformsIn(x0, x1) {
-    const out = [];
-    for (let c = Math.floor((x0 - 40) / TA.CHUNK); c <= Math.floor((x1 + 40) / TA.CHUNK); c++)
-      for (const p of this.getChunk(c).platforms) if (p.x1 >= x0 && p.x0 <= x1) out.push(p);
-    return out;
-  }
-  // Ground height under x on a layer
-  groundAt(x, layer) { return layer === 'c' ? this.floorAt(x) : 0; }
-  // Highest thing to stand on at x that is not above y (+tolerance): the cave
-  // floor, a ledge, the ground, or a shaft's trapdoor. Ledges and trapdoors are
-  // one-way and can be dropped through.
-  supportAt(x, y, noLedges = false, dropHatch = false) {
-    const f = this.floorAt(x);
-    let g = f <= y + 1 ? f : -1e9;
-    if (!noLedges && y < 0) for (const p of this.platformsIn(x, x)) if (x >= p.x0 && x <= p.x1 && p.y <= y + 1 && p.y > g) g = p.y;
-    if (y >= -1 && (!dropHatch || !this.shaftAt(x, TA.HOLE))) g = Math.max(g, 0);
-    return g > -1e9 ? g : f;
-  }
   isRemoved(id, regrowDays, day) {
     const d = this.removed[id];
     if (d === undefined) return false;
@@ -346,7 +378,8 @@ TA.World = class {
   genChunk(c) {
     const x0 = c * TA.CHUNK, x1 = x0 + TA.CHUNK;
     const r = TA.rng(TA.hash(this.seed, c, 1234));
-    const objects = [], platforms = [];
+    const objects = [];
+    const cells = this.genCells(c);
     const day = TA.game ? TA.game.day : 1;
     let n = 0;
     const take = (o) => { o.gone = this.isRemoved(o.id, o.regrow, day); objects.push(o); };
@@ -429,7 +462,6 @@ TA.World = class {
     for (let i = this.regionOf(x0) - 1; i <= this.regionOf(x1) + 1; i++) for (const s of this.shaftsOfRegion(i)) {
       if (s.x >= x0 && s.x < x1) {
         take({ kind: 'mouth', id: s.id + ':m', x: s.x, shaft: s, z: -1 });
-        for (const l of s.ledges) platforms.push(l);
       }
     }
     // portals
@@ -439,56 +471,43 @@ TA.World = class {
     if (x0 <= 0 && x1 > 0) add({ kind: 'campfire', x: 0, z: 1, light: 48 });
 
     // ---------------- caves
-    this.genCave(c, x0, x1, r, add, platforms);
-    return { objects, platforms };
+    this.genCave(c, cells, add);
+    return { objects, cells };
   }
 
-  genCave(c, x0, x1, r, add, platforms) {
-    const nearShaft = (x, pad) => this.shaftAt(x, pad);
-    // floating ledges, sometimes with a chest on top
-    for (let k = r.int(0, 2); k > 0; k--) {
-      const w = r.int(20, 40), px0 = x0 + r.int(10, TA.CHUNK - w - 10), px1 = px0 + w;
-      if (nearShaft((px0 + px1) / 2, 60)) continue;
-      let fmax = -1e9, cmin = 1e9;
-      for (let cc = Math.floor(px0 / 8); cc <= Math.floor(px1 / 8); cc++) { fmax = Math.max(fmax, this.floorCol(cc)); cmin = Math.min(cmin, this.ceilCol(cc)); }
-      const y = fmax + r.int(24, 32);
-      if (cmin - y < 22) continue;
-      const pl = { x0: px0, x1: px1, y };
-      platforms.push(pl);
-      if (r() < 0.3) add({ kind: 'chest', x: Math.round((px0 + px1) / 2), y, layer: 'c', tier: 2 });
-      else if (r() < 0.5) add({ kind: 'rock', x: Math.round((px0 + px1) / 2), y, layer: 'c', spr: 'rock_a', hp: 6, maxHp: 6, gems: true, rich: true, regrow: 5 });
-    }
-    // floor dressing: ore, glowing blooms, mushrooms, tufts
+  // Dress the caverns: blooms, mushrooms and tufts on their floors, roots from
+  // their roofs, now and then a chest or a lair
+  genCave(c, cells, add) {
+    const C = TA.CELL, cols = TA.CHUNK / 8, rows = -TA.BEDROCK_ROW, r = TA.rng(TA.hash(this.seed, c, 4321));
+    const at = (k, row) => row >= 0 ? C.AIR : cells[k * rows + (-1 - row)];
     const tufts = ['tuft_a', 'tuft_b', 'tuft_c', 'tuft_d', 'vmush'];
-    for (let x = x0 + 6; x < x1; x += 22) {
-      const xx = x + r.int(-5, 5);
-      const cb = TA.CAVE_BIOMES[this.caveBiomeVis(xx)];
-      const y = this.floorAt(xx);
-      // keep flat footing: skip spots right on a step
-      if (this.floorAt(xx - 5) !== y || this.floorAt(xx + 5) !== y || nearShaft(xx, 30)) continue;
-      const v = r();
-      if (v < cb.rocks * 0.35) { const rich = r() < cb.rich; add({ kind: 'rock', x: xx, y, layer: 'c', spr: rich ? 'rock_a' : r.pick(['rock_a', 'rock_b', 'rock_c']), hp: rich ? 6 : 4, maxHp: rich ? 6 : 4, gems: true, rich, regrow: 5 }); }
-      else if (v < (cb.rocks + cb.blooms) * 0.35) add({ kind: 'glow', x: xx, y, layer: 'c', spr: r.pick(['bloom_a', 'bloom_b', 'bloom_c', 'bloom_d', 'bloom_e', 'bloom_f']), flip: r() < 0.5, regrow: 2, light: 14 });
-      else if (v < (cb.rocks + cb.blooms + cb.shrooms) * 0.35) add({ kind: 'mushroom', x: xx, y, layer: 'c', regrow: 2 });
-      else if (v < 0.72) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(tufts), flip: r() < 0.5, back: true });
-      else if (v < 0.8) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(tufts.concat(['bloom_g'])), flip: r() < 0.5, front: true });
-      else if (v < 0.84 && cb === TA.CAVE_BIOMES.bones) add({ kind: 'decor', x: xx, y, layer: 'c', spr: r.pick(['g_ribs3', 'g_tusk', 'g_tusk2']) });
-    }
-    // roots hanging from the roof (and from the underside of the ground in shafts)
-    for (let x = x0 + 8; x < x1; x += 16) {
-      if (r() > 0.24) continue;
-      const xx = x + r.int(-4, 4), C = this.ceilAt(xx);
-      if (C > 1e3 || this.ceilAt(xx - 7) !== C || this.ceilAt(xx + 7) !== C) continue;
-      add({ kind: 'decor', hang: true, x: xx, y: C, layer: 'c', spr: r.pick(['root_a', 'root_b', 'root_c', 'root_d', 'root_e', 'root_e', 'root_f']), flip: r() < 0.5 });
-    }
-    // lairs
-    if (r() < 0.55) {
-      const x = x0 + r.int(30, TA.CHUNK - 30);
-      if (!nearShaft(x, 80)) {
-        const cb = TA.CAVE_BIOMES[this.caveBiomeAt(x)];
-        add({ kind: 'mobs', x, layer: 'c', poi: `l${c}`, mobs: Array.from({ length: r.int(1, 2) }, () => r.pick(cb.mobs)) });
+    const floors = [];
+    for (let k = 0; k < cols; k++) {
+      const x = (c * cols + k) * 8 + 4;
+      if (this.shaftAt(x, 48)) continue;
+      const cb = TA.CAVE_BIOMES[this.caveBiomeVis(x)];
+      for (let row = -4; row > TA.BEDROCK_ROW + 1; row--) {
+        if (at(k, row) !== C.AIR) continue;
+        if (TA.SOLID[at(k, row - 1)] && at(k, row + 1) === C.AIR) {
+          const y = row * 8;
+          floors.push({ x, y });
+          const v = r();
+          if (v < cb.blooms * 0.12) add({ kind: 'glow', x, y, layer: 'c', spr: r.pick(['bloom_a', 'bloom_b', 'bloom_c', 'bloom_d', 'bloom_e', 'bloom_f']), flip: r() < 0.5, regrow: 2, light: 14 });
+          else if (v < (cb.blooms + cb.shrooms) * 0.12) add({ kind: 'mushroom', x, y, layer: 'c', regrow: 2 });
+          else if (v < 0.22) add({ kind: 'decor', x, y, layer: 'c', spr: r.pick(tufts), flip: r() < 0.5, back: true });
+          else if (v < 0.26) add({ kind: 'decor', x, y, layer: 'c', spr: r.pick(tufts.concat(['bloom_g'])), flip: r() < 0.5, front: true });
+          else if (v < 0.28 && cb === TA.CAVE_BIOMES.bones) add({ kind: 'decor', x, y, layer: 'c', spr: r.pick(['g_ribs3', 'g_tusk', 'g_tusk2']) });
+        }
+        if (TA.SOLID[at(k, row + 1)] && r() < 0.07)
+          add({ kind: 'decor', hang: true, x, y: (row + 1) * 8, layer: 'c', spr: r.pick(['root_a', 'root_b', 'root_c', 'root_d', 'root_e', 'root_e', 'root_f']), flip: r() < 0.5 });
       }
     }
+    if (!floors.length) return;
+    if (r() < 0.55) {
+      const f = r.pick(floors), cb = TA.CAVE_BIOMES[this.caveBiomeAt(f.x)];
+      add({ kind: 'mobs', x: f.x, y: f.y, layer: 'c', poi: `l${c}`, mobs: Array.from({ length: r.int(1, 2) }, () => r.pick(cb.mobs)) });
+    }
+    if (r() < 0.35) { const f = r.pick(floors); add({ kind: 'chest', x: f.x, y: f.y, layer: 'c', tier: f.y < -320 ? 3 : 2 }); }
   }
 };
 

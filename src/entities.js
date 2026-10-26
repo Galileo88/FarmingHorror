@@ -6,34 +6,74 @@
 // ============================================================================
 window.TA = window.TA || {};
 
-// Shared movement: walk dx (blocked by border thickets, cave walls and low ceilings),
-// then gravity and landing on the ground, the cave floor or a one-way ledge.
-// Below the surface (y < 0) the earth is solid except for cave air and shafts.
+// Shared movement against the block grid. A body is a box TA.BODY_HW either side
+// of x and TA.PLAYER_H tall, standing at height y. It walks dx (stepping up
+// single blocks; stopped by walls and, above ground, by border thickets), then
+// falls, landing on blocks and one-way ledges. Ledges are dropped through while
+// dropT runs or with noLedges; a shaft's trapdoor (a ledge in the ground's top
+// row) only while dropT runs or with dropHatch.
 // Returns true if the horizontal move was blocked.
+TA.bodyHits = function (world, x, y) {
+  const hw = TA.BODY_HW, H = TA.PLAYER_H;
+  for (let r = Math.floor((y + 0.01) / 8); r <= Math.floor((y + H - 0.01) / 8); r++)
+    for (let c = Math.floor((x - hw + 0.01) / 8); c <= Math.floor((x + hw - 0.01) / 8); c++)
+      if (TA.SOLID[world.cell(c, r)]) return true;
+  return false;
+};
+// What a body standing at (x, y) is on: 'solid', 'ledge', 'hatch' or null
+TA.footing = function (world, x, y) {
+  if (Math.abs(y - Math.round(y / 8) * 8) > 0.01) return null;
+  const r = Math.round(y / 8) - 1;
+  let found = null;
+  for (let c = Math.floor((x - TA.BODY_HW + 0.01) / 8); c <= Math.floor((x + TA.BODY_HW - 0.01) / 8); c++) {
+    const t = world.cell(c, r);
+    if (TA.SOLID[t]) return 'solid';
+    if (t === TA.CELL.LEDGE) found = r === -1 ? 'hatch' : 'ledge';
+  }
+  return found;
+};
 TA.stepBody = function (e, dx, dt, world) {
+  e.dropT = Math.max(0, (e.dropT || 0) - dt);
+  const stands = (x, y) => {
+    const f = TA.footing(world, x, y);
+    return f === 'solid' || (f === 'ledge' && !e.noLedges && !e.dropT) || (f === 'hatch' && !e.dropHatch && !e.dropT);
+  };
+  // half inside a block (a block built at its feet): step up onto it, if there is room
+  if (TA.bodyHits(world, e.x, e.y)) { const up = Math.floor(e.y / 8) * 8 + 8; if (!TA.bodyHits(world, e.x, up)) e.y = up; }
   let blocked = false;
   if (dx) {
     let nx = e.x + dx;
-    if (e.y >= -1) { const c = world.surfaceClamp(e.x, nx); if (c !== nx) blocked = true; nx = c; }
-    else {
-      const f = world.floorAt(nx), cl = world.ceilAt(nx);
-      if (f > e.y + (e.onGround ? TA.STEP_UP : 0) + 0.01 || cl < e.y + TA.PLAYER_H) { blocked = true; nx = e.x; }
-      else if (e.onGround && f > e.y) e.y = f; // walk up a small step
+    if (e.y >= -1) { const cl = world.surfaceClamp(e.x, nx); if (cl !== nx) { blocked = true; nx = cl; } }
+    if (TA.bodyHits(world, nx, e.y)) {
+      const up = Math.floor(e.y / 8) * 8 + 8;
+      if (e.onGround && up - e.y <= TA.STEP_UP + 0.01 && !TA.bodyHits(world, nx, up)) e.y = up; // step up a block
+      else {
+        blocked = true;
+        nx = dx > 0 ? Math.floor((nx + TA.BODY_HW) / 8) * 8 - TA.BODY_HW - 0.01 : (Math.floor((nx - TA.BODY_HW) / 8) + 1) * 8 + TA.BODY_HW + 0.01;
+        if ((nx - e.x) * dx < 0 || TA.bodyHits(world, nx, e.y)) nx = e.x;
+      }
     }
     e.x = nx;
   }
-  e.dropT = Math.max(0, (e.dropT || 0) - dt);
-  const ground = world.supportAt(e.x, e.y, e.noLedges || e.dropT > 0, e.dropHatch || e.dropT > 0);
-  if (e.onGround && e.y - ground <= TA.STEP_UP && e.y >= ground) { e.y = ground; e.vy = 0; } // walk down small steps
+  if (e.onGround && e.vy <= 0 && stands(e.x, e.y)) e.vy = 0;
+  else if (e.onGround && e.vy <= 0 && !e.dropT && stands(e.x, e.y - 8)) { e.y -= 8; e.vy = 0; } // walk down a block
   else {
     e.onGround = false;
-    e.vy -= TA.GRAVITY * dt;
+    e.vy = Math.max(-300, e.vy - TA.GRAVITY * dt);
     let ny = e.y + e.vy * dt;
-    if (e.y < -1) {
-      const cl = world.ceilAt(e.x);
-      if (ny + TA.PLAYER_H > cl) { ny = cl - TA.PLAYER_H; if (e.vy > 0) e.vy = 0; }
+    if (e.vy > 0) {
+      // head into a block: stop just under it
+      const top = e.y + TA.PLAYER_H;
+      for (let r = Math.floor((top - 0.01) / 8) + 1; r <= Math.floor((ny + TA.PLAYER_H - 0.01) / 8); r++) {
+        let hit = false;
+        for (let c = Math.floor((e.x - TA.BODY_HW + 0.01) / 8); c <= Math.floor((e.x + TA.BODY_HW - 0.01) / 8); c++) if (TA.SOLID[world.cell(c, r)]) hit = true;
+        if (hit) { ny = r * 8 - TA.PLAYER_H; e.vy = 0; break; }
+      }
+    } else {
+      // land on the first thing to stand on between the old and new heights
+      for (let T = Math.floor(e.y / 8) * 8; T >= ny - 0.01; T -= 8)
+        if (stands(e.x, T)) { ny = T; e.vy = 0; e.onGround = true; break; }
     }
-    if (e.vy <= 0 && ny <= ground) { ny = ground; e.vy = 0; e.onGround = true; }
     e.y = ny;
   }
   e.layer = e.y < -8 ? 'c' : 's';
@@ -44,7 +84,7 @@ TA.stepBody = function (e, dx, dt, world) {
 TA.Player = class {
   constructor(x, y = 0, layer = 's') {
     this.x = x; this.y = y; this.layer = layer; this.vy = 0; this.onGround = true;
-    this.dir = 1; this.vx = 0;
+    this.dir = 1; this.lead = 1; this.vx = 0;
     this.maxHp = 5; this.hp = 5;
     this.anim = new TA.Anim('player', 'idle');
     this.state = 'free'; this.action = null;
@@ -52,8 +92,10 @@ TA.Player = class {
     this.coyote = 0; this.jumpBuf = 0;
   }
   get alive() { return this.state !== 'dead'; }
+  // Drop through the ledge or trapdoor underfoot
   drop(game) {
-    if (this.onGround && game.world.supportAt(this.x, this.y, true, true) < this.y - 0.5) { this.dropT = 0.4; this.onGround = false; } // long enough to clear the ledge under a trapdoor
+    const f = TA.footing(game.world, this.x, this.y);
+    if (this.onGround && (f === 'ledge' || f === 'hatch')) { this.dropT = 0.25; this.onGround = false; }
   }
 
   // Start a tool action. onHit fires at hitFrame, onDone at the end.
@@ -112,13 +154,14 @@ TA.Player = class {
       game.fx.burst(this.x, this.y + 1, '#7f708a', 3, 30);
     }
     if (!this.onGround && this.vy > 0 && !inp.isDown('jump')) this.vy *= Math.pow(0.0005, dt); // let go early for a short hop
-    // drop down through a ledge or a shaft's trapdoor
-    if (inp.hit('down')) this.drop(game);
-    if (move) this.dir = move;
+    // drop down through a ledge or a shaft's trapdoor; hold to keep going down
+    if (inp.isDown('down')) this.drop(game);
+    if (move) this.dir = this.lead = move; // lead: the way you last walked (the camera looks ahead that way)
     const landed = !this.onGround;
     TA.stepBody(this, dx + move * speed * dt, dt, game.world);
     if (landed && this.onGround) game.fx.burst(this.x, this.y + 1, '#7f708a', 3, 24);
     if (!this.onGround) { this.anim.set('player', 'walk'); this.anim.t = this.vy > 0 ? 2 / 11 : 5 / 11; this.idleTime = 0; }
+    else if (game.digging && !move) { if (this.anim.sheet !== 'miner' || this.anim.done) this.anim.set('miner', 'mine', true); this.idleTime = 0; }
     else if (move) {
       this.anim.set('player', 'walk');
       this.anim.def = [...TA.SHEETS.player.anims.walk]; if (run) this.anim.def[2] = 15;
@@ -547,7 +590,7 @@ TA.Arrow = class {
 // Heights are world heights; particles settle on whatever is under them.
 TA.FX = class {
   constructor() { this.parts = []; this.texts = []; }
-  floor(x, y) { const g = TA.game; return g ? g.world.supportAt(x, y) : 0; }
+  floor(x, y) { const g = TA.game; return g ? g.world.floorBelow(x, y + 1) : 0; }
   burst(x, y, color, n = 6, spread = 40) {
     const fl = this.floor(x, y);
     for (let i = 0; i < n; i++) this.parts.push({ x, y, fl, vx: (Math.random() - 0.5) * spread, vy: 20 + Math.random() * 30, color, t: 0, life: 0.5 + Math.random() * 0.4 });
