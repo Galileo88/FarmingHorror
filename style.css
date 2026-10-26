@@ -38,7 +38,9 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 .35em; margin: 0 .1em;
 #map { width: min(300px, 34vw); height: 18px; image-rendering: pixelated; border: 1px solid var(--line); border-radius: 3px; margin-top: 2px; }
 #clock { display: flex; align-items: center; gap: 6px; font-size: 15px; background: var(--panel); padding: 3px 8px; border-radius: 4px; border: 1px solid var(--ink2); }
 #clock span { color: var(--muted); }
-#clock .rain { color: #8fd3ff; }
+#clock .wx { color: #c7dcd0; }
+#clock .wx.rain, #clock .wx.storm { color: #8fd3ff; }
+#clock .wx.sunny { color: var(--gold); }
 #coins { display: flex; align-items: center; gap: 5px; font-size: 16px; color: var(--gold); }
 #hint { position: absolute; top: 70px; left: 50%; transform: translateX(-50%); max-width: min(560px, 80vw); text-align: center; font-size: 14px; color: var(--text); background: rgba(30,22,34,.7); padding: 4px 12px; border-radius: 4px; }
 #hint:empty { display: none; }
@@ -113,7 +115,8 @@ body.touch .toast { font-size: 13px; }
 #touch button.on { background: rgba(98,85,101,.85); }
 #touch .pad { display: flex; gap: 10px; align-items: flex-end; }
 #t-left, #t-right { width: 68px; height: 68px; font-size: 22px !important; }
-#t-run { width: 46px; height: 46px; }
+#t-run, #t-down { width: 46px; height: 46px; }
+#t-jump { width: 64px; height: 64px; font-size: 20px !important; }
 #touch .acts { display: flex; gap: 10px; align-items: flex-end; }
 #t-menu, #t-eat, #t-build { width: 50px; height: 50px; }
 #t-action { width: 80px; height: 80px; border-color: var(--amber) !important; }

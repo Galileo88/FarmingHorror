@@ -23,9 +23,9 @@ TA.UI = class {
     setTimeout(() => el.remove(), 3200);
     while (this.$('toasts').children.length > 4) this.$('toasts').firstChild.remove();
   }
-  biomeBanner(name, color) {
+  biomeBanner(name, color, sub = 'entering') {
     const el = this.$('biome');
-    el.innerHTML = `<small>entering</small>${name}`; el.style.setProperty('--c', color);
+    el.innerHTML = `<small>${sub}</small>${name}`; el.style.setProperty('--c', color);
     el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
   }
   flashItem(item) {
@@ -49,7 +49,7 @@ TA.UI = class {
     // prompt above the player
     const pr = this.$('prompt'), R = TA.renderer;
     if (this.target && !this.target.quiet) {
-      const sx = (p.x - R.camX) * R.scale, sy = (R.groundY - 22) * R.scale;
+      const sx = (p.x - R.camX) * R.scale, sy = (R.Y(p.y) - 22) * R.scale;
       pr.style.transform = `translate(${Math.round(sx)}px, ${Math.round(sy)}px) translate(-50%, -100%)`;
       const key = this.touch ? '' : '<kbd>E</kbd>';
       const html = `${key}${TA.iconHTML(this.target.icon, 16)}<span>${this.target.label}</span>`;
@@ -71,7 +71,9 @@ TA.UI = class {
     for (let i = 0; i < p.maxHp; i++) hearts += TA.iconHTML(i < p.hp ? 'heart' : 'heart_empty', 18);
     this.set('hearts', hearts);
     const night = g.isNight();
-    this.set('clock', `${TA.iconHTML(night ? 'moon' : 'sun', 16)}<b>Day ${g.day}</b><span>${TA.fmtTime(g.time)}</span>${g.isRaining() ? '<span class="rain">rain</span>' : ''}`);
+    const w = g.weatherNow();
+    const wx = w.k > 0.2 && w.def.name ? `<span class="wx ${w.type}">${w.def.name}</span>` : '';
+    this.set('clock', `${TA.iconHTML(night ? 'moon' : 'sun', 16)}<b>Day ${g.day}</b><span>${TA.fmtTime(g.time)}</span>${wx}`);
     this.set('coins', `${TA.iconHTML('coin', 16)}<b data-item="coin">${inv.coin || 0}</b>`);
     const res = ['wood', 'stone', 'fiber', 'gem'].map(k => `<span class="res" data-item="${k}" title="${TA.ITEMS[k].name}">${TA.iconHTML(k, 16)}${inv[k] || 0}</span>`).join('');
     const prod = [...TA.CROP_ORDER, 'mushroom', 'meat', 'potion'].filter(k => inv[k] > 0)
@@ -79,9 +81,10 @@ TA.UI = class {
     this.set('res', res + (prod ? `<i class="sep"></i>${prod}` : ''));
     const s = g.selectedSeed, n = inv['seed_' + s] || 0;
     this.set('seed', `${TA.iconHTML('seed_' + s, 20)}<span><small>seed</small>${TA.CROPS[s].name} ×${n}</span>`);
-    const b = TA.BIOMES[g.world.biomeAt(p.x)];
+    const b = p.layer === 'c' ? TA.CAVE_BIOMES[g.world.caveBiomeAt(p.x)] : TA.BIOMES[g.world.biomeAt(p.x)];
     const d = Math.round((p.x - (g.claim ? g.claim.x : 0)) / 16);
-    this.set('where', `<b style="color:${b.color}">${b.name}</b> <span>${g.claim ? (d === 0 ? 'home' : `${Math.abs(d)}m ${d < 0 ? 'west' : 'east'} of home`) : 'no home yet'}</span>`);
+    const depth = p.layer === 'c' ? ' <span>(underground)</span>' : '';
+    this.set('where', `<b style="color:${b.color}">${b.name}</b>${depth} <span>${g.claim ? (d === 0 ? 'home' : `${Math.abs(d)}m ${d < 0 ? 'west' : 'east'} of home`) : 'no home yet'}</span>`);
     this.set('hint', this.hintText());
   }
   set(id, html) { const el = this.$(id); if (el && el._h !== html) { el.innerHTML = html; el._h = html; } }
@@ -98,6 +101,9 @@ TA.UI = class {
     if (!g.has('hut')) return `Build a hut (${k}${this.touch ? 'Build' : '<kbd>B</kbd>'}) so you can sleep through the night.`;
     if (!g.has('market')) return 'Build a market to sell your harvest, or trade with travellers.';
     if (!g.has('lighttower')) return 'A light tower keeps night creatures away from your fields.';
+    const m = g.buildings.find(b => b.type === 'market');
+    if (m && !g.tutorial.stall && !Object.keys(m.stock).length) return 'Stock your market stall. Travellers passing by will buy from it.';
+    if (g.underground && !g.tutorial.climbed) return `Jump (${this.touch ? 'the ▲ button' : '<kbd>W</kbd> / <kbd>Space</kbd>'}) up the ledges to the light to climb back out.`;
     return '';
   }
 
@@ -116,8 +122,13 @@ TA.UI = class {
       ctx.fillStyle = TA.BIOMES[g.world.biomeAt(x)].color;
       ctx.globalAlpha = 0.55; ctx.fillRect(toX(x), h - 7, 3, 4); ctx.globalAlpha = 1;
     }
+    // cliffs walling in hidden biomes
+    ctx.fillStyle = '#c7dcd0';
+    for (const e of g.world.cliffsIn(ex[0], ex[1])) ctx.fillRect(toX(e), 1, 1, h - 2);
     for (const d of Object.values(g.world.discovered)) {
-      ctx.fillStyle = ['camp', 'warcamp', 'bones'].includes(d.type) ? '#e83b3b' : d.type === 'grove' ? '#30e1b9' : '#fbb954';
+      if (d.type === 'cave') { ctx.fillStyle = '#7f708a'; ctx.fillRect(toX(d.x) - 1, h - 4, 3, 3); continue; }
+      if (d.type === 'portal') { ctx.fillStyle = '#8ff8e2'; ctx.fillRect(toX(d.x), h - 15, 1, 5); continue; }
+      ctx.fillStyle = ['camp', 'warcamp', 'bones'].includes(d.type) ? '#e83b3b' : ['grove', 'shrine'].includes(d.type) ? '#30e1b9' : '#fbb954';
       ctx.fillRect(toX(d.x) - 1, h - 13, 3, 3);
     }
     if (g.claim) { ctx.fillStyle = '#f9c22b'; ctx.fillRect(toX(g.claim.x) - 1, 2, 3, 8); ctx.fillRect(toX(g.claim.x) - 1, 2, 6, 3); }
@@ -219,6 +230,54 @@ TA.UI = class {
     this.openModal(title, render(), onClick);
   }
 
+  // Your market: sell straight away, or stock the stall for travellers (they pay more)
+  openMarket(b) {
+    const g = this.game;
+    const goods = k => TA.ITEMS[k] && TA.ITEMS[k].sell && (TA.ITEMS[k].produce || ['mushroom', 'gem', 'meat', 'potion'].includes(k));
+    const render = () => {
+      let html = '';
+      if (b.till) html += `<button class="wide" data-act="till">Collect ${TA.iconHTML('coin', 14)} ${b.till} from the till</button>`;
+      html += `<h3>Stall <small>(travellers pay ${TA.STALL_PREMIUM * 100 - 100}% more, when they pass by)</small></h3>`;
+      const stocked = Object.keys(b.stock).filter(k => b.stock[k] > 0);
+      if (!stocked.length) html += '<p class="sub">The stall is empty.</p>';
+      html += stocked.map(k => `<div class="row">${TA.iconHTML(k, 24)}<span class="info"><b>${TA.ITEMS[k].name} ×${b.stock[k]}</b><small>${g.stallPrice(k)} each on the stall</small></span>
+        <span class="btns"><button data-act="unstock" data-arg="${k}">Take back</button></span></div>`).join('');
+      const own = Object.keys(g.inv).filter(k => g.inv[k] > 0 && goods(k));
+      html += '<h3>Your goods</h3>';
+      if (!own.length) html += '<p class="sub">Nothing to sell yet.</p>';
+      html += own.map(k => `<div class="row">${TA.iconHTML(k, 24)}<span class="info"><b>${TA.ITEMS[k].name} ×${g.inv[k]}</b><small>sell now ${TA.ITEMS[k].sell} · stall ${g.stallPrice(k)}</small></span>
+        <span class="btns"><button data-act="sell" data-arg="${k}">Sell all</button><button data-act="stock" data-arg="${k}">Stock all</button></span></div>`).join('');
+      if (own.length > 1) html += `<button class="wide" data-act="stockall">Stock everything on the stall</button>`;
+      html += `<p class="purse">You have ${TA.iconHTML('coin', 14)} ${g.inv.coin || 0}</p>`;
+      return html;
+    };
+    const onClick = (act, arg) => {
+      if (act === 'till') { g.inv.coin = (g.inv.coin || 0) + b.till; this.toast(`Collected ${b.till} coins`, 'good'); b.till = 0; }
+      if (act === 'sell') { g.inv.coin = (g.inv.coin || 0) + g.inv[arg] * TA.ITEMS[arg].sell; g.inv[arg] = 0; }
+      const stock = k => { b.stock[k] = (b.stock[k] || 0) + g.inv[k]; g.inv[k] = 0; g.tutorial.stall = true; };
+      if (act === 'stock') stock(arg);
+      if (act === 'stockall') for (const k of Object.keys(g.inv)) if (g.inv[k] > 0 && goods(k)) stock(k);
+      if (act === 'unstock') { g.give(arg, b.stock[arg]); delete b.stock[arg]; }
+      this.openModal('Market', render(), onClick);
+    };
+    this.openModal('Market', render(), onClick);
+  }
+
+  openTower(b) {
+    const g = this.game;
+    const render = () => {
+      const next = TA.TOWER_LEVELS[b.level + 1];
+      let html = `<p class="sub">Level ${b.level} · ${TA.TOWER_LEVELS[b.level].archers} archer${b.level > 1 ? 's' : ''} shooting from the windows.</p>`;
+      if (next) html += `<button class="row" data-act="up" ${g.canAfford(next.cost) ? '' : 'disabled'}><span class="thumb b-watchtower"></span>
+        <span class="info"><b>Upgrade to level ${b.level + 1}</b><small>Station ${next.archers} archers in the tower.</small></span><span class="costs">${this.costHTML(next.cost)}</span></button>`;
+      else html += '<p class="sub">Every window is manned.</p>';
+      return html;
+    };
+    const onClick = act => { if (act === 'up') { g.upgradeTower(b); this.closeModal(); } };
+    this.openModal('Watchtower', render(), onClick);
+    this.paintThumbs();
+  }
+
   openArmory() {
     const g = this.game;
     const render = () => Object.entries(TA.UPGRADES).map(([k, u]) => {
@@ -241,7 +300,8 @@ TA.UI = class {
       <p class="sub">World seed: <b>${g.seedStr}</b> · Day ${g.day} · ${g.stats.harvested} harvested · ${g.stats.kills} creatures felled</p>
       <div class="help">
         <div><kbd>A</kbd><kbd>D</kbd> / <kbd>←</kbd><kbd>→</kbd> walk &nbsp; <kbd>Shift</kbd> run</div>
-        <div><kbd>E</kbd> / <kbd>Space</kbd> do the thing in front of you</div>
+        <div><kbd>W</kbd> / <kbd>Space</kbd> jump &nbsp; <kbd>S</kbd> drop through a ledge</div>
+        <div><kbd>E</kbd> / <kbd>Enter</kbd> do the thing in front of you</div>
         <div><kbd>B</kbd> build &nbsp; <kbd>Q</kbd> switch seed &nbsp; <kbd>F</kbd> eat</div>
       </div>
       <button class="wide" data-act="resume">Resume</button>
@@ -270,7 +330,16 @@ TA.UI = class {
       const el = this.$(id); if (!el) return;
       el.addEventListener('pointerdown', e => { e.preventDefault(); TA.input.press(key); });
     };
-    hold('t-left', 'left'); hold('t-right', 'right'); hold('t-run', 'run');
+    hold('t-left', 'left'); hold('t-right', 'right'); hold('t-run', 'run'); hold('t-down', 'down');
+    // jump: a tap starts it, holding keeps it high
+    const j = this.$('t-jump');
+    if (j) {
+      j.addEventListener('pointerdown', e => { e.preventDefault(); TA.input.press('jump'); TA.input.touch.jump = true; j.classList.add('on'); });
+      const off = e => { e.preventDefault(); TA.input.touch.jump = false; j.classList.remove('on'); };
+      j.addEventListener('pointerup', off); j.addEventListener('pointercancel', off); j.addEventListener('pointerleave', off);
+    }
+    // the down button also drops through ledges on a tap
+    const dn = this.$('t-down'); if (dn) dn.addEventListener('pointerdown', () => TA.input.press('down'));
     tap('t-action', 'action'); tap('t-build', 'build'); tap('t-eat', 'eat'); tap('t-menu', 'menu');
     tap('seed', 'seed');
   }

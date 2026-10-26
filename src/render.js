@@ -1,6 +1,11 @@
 // ============================================================================
-// Rendering. The world is drawn at low resolution into `canvas` and scaled up
-// by CSS with image-rendering: pixelated.
+// Rendering. The canvas is screen sized; everything is drawn in world pixels
+// through an integer scale transform, with positions snapped to screen pixels
+// (TA.px) so motion is smooth while the art stays crisp.
+// The world is one space: sky above the ground, solid earth below it, and the
+// caves carved out of the earth TA.CAVE_DEPTH down. It is drawn back to front:
+// sky, cave air, back row, earth, ground, street, actors, foreground, light,
+// weather. The camera follows the player down a shaft and back up.
 // ============================================================================
 window.TA = window.TA || {};
 
@@ -8,24 +13,37 @@ TA.Renderer = class {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.layer = document.createElement('canvas');   // parallax composition
-    this.layer2 = document.createElement('canvas');
-    this.light = document.createElement('canvas');   // darkness mask
+    this.setC = document.createElement('canvas');    // one parallax set, opaque
+    this.skyA = document.createElement('canvas');    // a biome's sky (time-of-day sets mixed)
+    this.skyB = document.createElement('canvas');
+    this.light = document.createElement('canvas');   // darkness mask (world resolution, upscaled smooth)
+    this.glow = document.createElement('canvas');    // warm light added on top
+    this.camX = 0; this.camY = 0;
     this.resize();
     addEventListener('resize', () => this.resize());
     TA.renderer = this;
   }
   resize() {
     const W = innerWidth, H = innerHeight;
-    this.scale = Math.max(1, Math.round(H / 150));
+    // about 92 world pixels tall, always a whole-number zoom
+    this.scale = Math.max(2, Math.round(H / 92));
+    TA.PX = this.scale;
     this.w = Math.ceil(W / this.scale); this.h = Math.ceil(H / this.scale);
-    for (const c of [this.canvas, this.layer, this.layer2, this.light]) { c.width = this.w; c.height = this.h; }
+    // Offscreen layers don't need full resolution: the sky moves slowly (half
+    // pixels are plenty) and the light masks are nothing but soft gradients.
+    this.skyRes = Math.min(this.scale, 2);
+    this.canvas.width = this.w * this.scale; this.canvas.height = this.h * this.scale;
+    for (const c of [this.setC, this.skyA, this.skyB]) { c.width = this.w * this.skyRes; c.height = this.h * this.skyRes; c.res = this.skyRes; }
+    for (const c of [this.light, this.glow]) { c.width = this.w; c.height = this.h; c.res = 1; }
     this.canvas.style.width = this.w * this.scale + 'px';
     this.canvas.style.height = this.h * this.scale + 'px';
-    for (const c of [this.ctx, this.layer.getContext('2d'), this.layer2.getContext('2d'), this.light.getContext('2d')]) c.imageSmoothingEnabled = false;
-    this.groundY = this.h - 30;
+    this.groundY = this.h - 22;
   }
-  toScreenX(x) { return Math.round(x - this.camX); }
+  // world-pixel transform on any of our canvases
+  begin(ctx) { ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0); ctx.imageSmoothingEnabled = false; return ctx; }
+  ctxOf(c) { const x = c.getContext('2d'); x.setTransform(c.res, 0, 0, c.res, 0, 0); x.imageSmoothingEnabled = false; return x; }
+  // screen y of a world height
+  Y(y) { return this.baseY - y; }
 
   // ------------------------------------------------------------ parallax
   timeSets(base, hour) {
@@ -40,243 +58,544 @@ TA.Renderer = class {
   }
   drawSet(ctx, set, camX) {
     const n = TA.PARALLAX_SETS[set];
-    const top = this.groundY - 150;
+    const top = this.baseY - 128; // the art's tree line sits on the ground
     for (let i = 0; i < n; i++) {
       const im = TA.img[`px_${set}_${i}`]; if (!im) continue;
       const f = i === 0 ? 0 : 0.04 + 0.42 * Math.pow(i / (n - 1), 1.6);
       if (i === 0 && top > 0) ctx.drawImage(im, 0, 0, im.width, 1, 0, 0, this.w, top + 1); // extend sky upward
-      let ox = -Math.round(camX * f) % im.width; if (ox > 0) ox -= im.width;
+      let ox = TA.px(-(camX * f) % im.width); if (ox > 0) ox -= im.width;
       for (let x = ox; x < this.w; x += im.width) ctx.drawImage(im, x, top);
     }
   }
-  drawBiomeSky(ctx, biome, camX, hour) {
-    const sets = this.timeSets(TA.BIOMES[biome].parallax, hour);
-    for (const [set, a] of sets) {
-      if (a <= 0) continue;
-      ctx.globalAlpha = a; this.drawSet(ctx, set, camX); ctx.globalAlpha = 1;
+  // A biome's sky into `out`. Each time-of-day set is composited opaque on its
+  // own and only then cross-faded, so the layers of two sets never interleave.
+  drawBiomeSky(out, biome, camX, hour) {
+    const oc = this.ctxOf(out);
+    const sets = this.timeSets(TA.BIOMES[biome].parallax, hour).filter(([, a]) => a > 0);
+    oc.globalAlpha = 1;
+    this.drawSet(oc, sets[0][0], camX);
+    for (const [set, a] of sets.slice(1)) {
+      const sc = this.ctxOf(this.setC);
+      this.drawSet(sc, set, camX);
+      oc.setTransform(1, 0, 0, 1, 0, 0); oc.globalAlpha = a; oc.drawImage(this.setC, 0, 0); oc.globalAlpha = 1;
+      this.ctxOf(out);
     }
   }
-
-  // ------------------------------------------------------------ main draw
-  draw(game) {
-    const ctx = this.ctx, p = game.player;
-    const lead = p.dir * 24;
-    game.camX = TA.lerp(game.camX, p.x + lead, 0.08);
-    const shake = game.shake > 0 ? (Math.random() - 0.5) * game.shake : 0;
-    this.camX = Math.round(game.camX - this.w / 2 + shake);
-    const camX = this.camX, gy = this.groundY, W = this.w;
-    const hour = game.time;
-
-    // sky + parallax, blended between neighbouring biomes
-    const bl = game.world.biomeBlend(p.x);
-    const lc = this.layer.getContext('2d');
-    lc.clearRect(0, 0, W, this.h);
-    this.drawBiomeSky(lc, bl.a, camX, hour);
-    ctx.drawImage(this.layer, 0, 0);
-    if (bl.t > 0) {
-      lc.clearRect(0, 0, W, this.h);
-      this.drawBiomeSky(lc, bl.b, camX, hour);
-      ctx.globalAlpha = bl.t; ctx.drawImage(this.layer, 0, 0); ctx.globalAlpha = 1;
+  // Stretch an offscreen layer over the whole screen
+  blit(src, alpha = 1, smooth = false) {
+    const ctx = this.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.imageSmoothingEnabled = smooth; ctx.globalAlpha = alpha;
+    ctx.drawImage(src, 0, 0, src.width, src.height, 0, 0, this.canvas.width, this.canvas.height);
+    ctx.globalAlpha = 1;
+    this.begin(ctx);
+  }
+  drawSky(game, camX) {
+    const ctx = this.ctx, hour = game.time;
+    const bd = game.world.band(camX + this.w / 2);
+    if (bd.w <= 0 || bd.w >= 1 || bd.cliff) {
+      if (bd.cliff && bd.a !== bd.b) {
+        // a cliff splits the view: each side shows its own sky
+        const ex = bd.edge - camX;
+        this.drawBiomeSky(this.skyA, bd.a, camX, hour);
+        this.drawBiomeSky(this.skyB, bd.b, camX, hour);
+        TA.clipHalf(ctx, -1, ex, () => this.blit(this.skyA));
+        TA.clipHalf(ctx, 1, ex, () => this.blit(this.skyB));
+      } else { this.drawBiomeSky(this.skyA, bd.w >= 1 ? bd.b : bd.a, camX, hour); this.blit(this.skyA); }
+    } else {
+      this.drawBiomeSky(this.skyA, bd.a, camX, hour); this.blit(this.skyA);
+      this.drawBiomeSky(this.skyB, bd.b, camX, hour); this.blit(this.skyB, bd.w);
     }
+    // weather greys the sky out
+    const w = game.weatherNow();
+    if (w.def.sky) { ctx.fillStyle = `rgba(104,112,128,${w.def.sky * w.k})`; ctx.fillRect(0, 0, this.w, this.baseY); }
     // stars & moon at night
     const dark = game.darkness();
-    if (dark > 0.3) {
+    if (dark > 0.3 && !w.def.sky) {
       ctx.globalAlpha = (dark - 0.3) * 2.5;
       for (let i = 0; i < 40; i++) {
         const sx = (TA.hash(game.seed, i, 5) % 600) - (camX * 0.01) % 600;
-        const sy = TA.hash(game.seed, i, 6) % Math.max(1, gy - 90);
+        const sy = TA.hash(game.seed, i, 6) % Math.max(1, this.groundY - 40) + this.baseY - this.groundY;
         ctx.fillStyle = i % 7 === 0 ? '#c7dcd0' : '#7f708a';
-        ctx.fillRect(Math.round(((sx % W) + W) % W), sy, 1, 1);
+        ctx.fillRect(Math.round(((sx % this.w) + this.w) % this.w), sy, 1, 1);
       }
-      TA.drawSpr(ctx, 'moon', W * 0.78, Math.max(18, gy - 118));
+      TA.drawSpr(ctx, 'moon', this.w * 0.78, Math.max(16, this.groundY - 50) + this.baseY - this.groundY);
       ctx.globalAlpha = 1;
     }
+  }
 
-    const x0 = camX - 40, x1 = camX + W + 40;
-    const objs = game.world.objectsIn(x0, x1);
+  // ------------------------------------------------------------ camera
+  // Eased with the same dt the player moves by, and left unsnapped: positions
+  // snap only after the camera is subtracted, so a steady walk is steady on screen.
+  updateCamera(game, dt) {
+    const p = game.player;
+    const k = 1 - Math.exp(-dt * 4.5); // frame-rate independent easing
+    game.camX += (p.x + p.dir * 20 - game.camX) * k;
+    // On the surface the ground sits near the bottom of the screen. Below it, the
+    // view sinks with the player (a little above centre); it follows falls quickly
+    // and climbs lazily, so jumps don't bob the screen.
+    const target = p.y < -4 ? Math.min(0, p.y - 12) : 0;
+    game.camY += (target - game.camY) * (1 - Math.exp(-dt * (target < game.camY ? 7 : 3)));
+    const shake = game.shake > 0 ? (Math.random() - 0.5) * game.shake : 0;
+    this.camX = game.camX - this.w / 2 + shake;
+    this.camY = game.camY;
+    this.baseY = TA.px(this.groundY + this.camY);
+  }
 
+  // ------------------------------------------------------------ main draw
+  draw(game, dt = 1 / 60) {
+    const ctx = this.begin(this.ctx), p = game.player, W = this.w;
+    this.updateCamera(game, dt);
+    const camX = this.camX;
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+    ctx.fillStyle = '#2e222f'; ctx.fillRect(0, 0, W, this.h);
+    const objs = game.world.objectsIn(camX - 40, camX + W + 40, null);
+    const t = performance.now() / 1000;
+    const sx = x => x - camX;
+    // is any sky / any earth on screen?
+    const skyVis = this.baseY > 0, earthVis = this.baseY + TA.CRUST < this.h;
 
-    // ground strip
-    this.drawGround(ctx, game, camX);
+    if (skyVis) this.drawSky(game, camX);
+    if (earthVis) this.drawCaveBack(game, camX);
+
+    // back row: buildings and trees further off, hazed, and sinking into the dark at night
+    const backA = 1 - game.darkness() * 0.8;
+    for (const o of objs) if (o.back) {
+      const cave = o.layer === 'c';
+      this.drawObj(ctx, game, o, sx(o.x), this.Y(o.y || 0) - (cave ? 0 : 1), t, { dark: true, alpha: cave ? 1 : backA });
+    }
+
+    if (earthVis) this.drawCaveRock(game, camX);
+    if (skyVis || this.baseY + TA.CRUST > 0) this.drawGround(ctx, game, camX);
 
     // claim edge posts
-    if (game.claim) {
-      for (const s of [-1, 1]) {
-        const ex = game.claim.x + s * game.claim.r;
-        if (!game.buildings.some(b => b.type === 'wall' && b.side === s)) TA.drawSpr(ctx, 'k_fence', ex - camX, gy);
-      }
+    if (game.claim) for (const s of [-1, 1]) {
+      const ex = game.claim.x + s * game.claim.r;
+      if (!game.buildings.some(b => b.type === 'wall' && b.side === s)) TA.drawSpr(ctx, 'k_fence', sx(ex), this.baseY);
     }
 
-    // structures / nature behind actors
-    const t = performance.now() / 1000;
-    objs.sort((a, b) => (a.z || 0) - (b.z || 0));
-    for (const o of objs) {
-      const sx = o.x - camX;
-      switch (o.kind) {
-        case 'decor': TA.drawSpr(ctx, o.spr, sx, gy, o.flip); break;
-        case 'struct':
-          if (o.bld) TA.drawBuilding(ctx, o.bld, 17, sx, gy); else TA.drawSpr(ctx, o.spr, sx, gy);
-          break;
-        case 'flag': ctx.fillStyle = '#4d3729'; ctx.fillRect(Math.round(sx - 2), gy - 22, 1, 23); TA.drawFlag(ctx, o.flag, t, sx, gy - 8); break;
-        case 'tree': TA.drawSpr(ctx, o.spr, sx, gy, o.flip); break;
-        case 'rock': TA.drawSpr(ctx, o.spr, sx, gy); break;
-        case 'bush': TA.drawSpr(ctx, o.spr, sx, gy, o.flip); break;
-        case 'mushroom': TA.drawIcon(ctx, 'mushroom', sx, gy); break;
-        case 'wildcrop': TA.drawCrop(ctx, o.crop, 4, sx, gy); break;
-        case 'campfire': {
-          const im = TA.img.campfire; if (im) ctx.drawImage(im, (Math.floor(t * 8) % 4) * 16, 0, 16, 16, Math.round(sx - 8), gy - 16, 16, 16);
-          break;
-        }
-        case 'chest': {
-          const im = TA.img.chest; if (im) ctx.drawImage(im, game.world.opened[o.id] ? 16 : 0, 0, 16, 16, Math.round(sx - 8), gy - 16, 16, 16);
-          break;
-        }
-      }
-    }
+    // the street: structures, nature, props (archways: left half only)
+    const mid = objs.filter(o => !o.back && !o.front).sort((a, b) => (a.z || 0) - (b.z || 0));
+    for (const o of mid) this.drawObj(ctx, game, o, sx(o.x), this.Y(o.y || 0), t, { half: o.arch ? -1 : 0 });
 
     // player buildings
-    for (const b of game.buildings) {
-      const sx = b.x - camX;
-      if (sx < -80 || sx > W + 80) continue;
-      if (b.type === 'banner') {
-        ctx.fillStyle = '#4d3729'; ctx.fillRect(Math.round(sx - 2), gy - 24, 1, 25);
-        TA.drawFlag(ctx, 'flagBanner', t, sx, gy - 10);
-        continue;
-      }
-      const sheet = b.type === 'wall' ? (b.side < 0 ? 'wall' : 'wall2') : b.type;
-      TA.drawBuilding(ctx, sheet, b.frame, sx, gy);
-      if (b.type === 'watchtower' && b.built) TA.drawUnit(ctx, 'archer', b.cool > 1.2 ? 'attack' : 'idle', b.cool > 1.2 ? Math.floor((1.6 - b.cool) * 12) : Math.floor(t * 7) % 8, sx, gy - 18, (b.aimDir || 1) < 0);
-      if (b.isWall && b.hp < b.maxHp) {
-        ctx.fillStyle = '#2e222f'; ctx.fillRect(Math.round(sx - 8), gy - 20, 16, 2);
-        ctx.fillStyle = '#c8ac99'; ctx.fillRect(Math.round(sx - 8), gy - 20, Math.ceil(16 * b.hp / b.maxHp), 2);
-      }
-    }
+    for (const b of game.buildings) this.drawBuilding(ctx, game, b, sx(b.x), t, -1);
 
     // fields
     for (const pl of game.plots) {
-      const sx = pl.x - camX; if (sx < -16 || sx > W + 16) continue;
-      if (TA.img.soil) ctx.drawImage(TA.img.soil, pl.wet ? 16 : 0, 0, 16, 6, Math.round(sx - 8), gy - 1, 16, 6);
+      const x = sx(pl.x); if (x < -16 || x > W + 16) continue;
+      if (TA.img.soil) ctx.drawImage(TA.img.soil, pl.wet ? 16 : 0, 0, 16, 6, TA.px(x - 8), this.baseY - 1, 16, 6);
       const st = game.cropStage(pl);
-      if (st >= 0) TA.drawCrop(ctx, pl.crop, st, sx, gy + 1);
+      if (st >= 0) TA.drawCrop(ctx, pl.crop, st, x, this.baseY + 1);
     }
 
     // target highlight
     const tgt = game.ui.target;
     if (tgt && tgt.slot !== undefined) {
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
-      const sx = Math.round(tgt.slot - camX);
-      ctx.fillRect(sx - 8, gy + 5, 3, 1); ctx.fillRect(sx + 5, gy + 5, 3, 1);
-      ctx.fillRect(sx - 8, gy + 4, 1, 1); ctx.fillRect(sx + 7, gy + 4, 1, 1);
+      const x = TA.px(tgt.slot - camX), gy = this.baseY;
+      ctx.fillRect(x - 8, gy + 5, 3, 1); ctx.fillRect(x + 5, gy + 5, 3, 1);
+      ctx.fillRect(x - 8, gy + 4, 1, 1); ctx.fillRect(x + 7, gy + 4, 1, 1);
     }
 
-    // actors
-    for (const n of game.npcs) n.draw(ctx, n.x - camX, gy);
-    for (const d of game.strays) d.draw(ctx, d.x - camX, gy);
-    for (const g of game.guards) g.draw(ctx, g.x - camX, gy);
-    for (const m of game.mobs) m.draw(ctx, m.x - camX, gy);
-    if (game.dog) game.dog.draw(ctx, game.dog.x - camX, gy);
-    p.draw(ctx, p.x - camX, gy);
+    // actors (bodies first, so the living walk over them)
+    const at = e => [sx(e.x), this.Y(e.y || 0)];
+    for (const m of game.mobs) if (m.dead) m.draw(ctx, ...at(m));
+    for (const n of game.npcs) n.draw(ctx, ...at(n));
+    for (const f of game.folk) f.draw(ctx, ...at(f));
+    for (const tr of game.travellers) tr.draw(ctx, ...at(tr));
+    for (const d of game.strays) d.draw(ctx, ...at(d));
+    for (const g of game.guards) g.draw(ctx, ...at(g));
+    for (const m of game.mobs) if (!m.dead) m.draw(ctx, ...at(m));
+    if (game.dog) game.dog.draw(ctx, ...at(game.dog));
+    p.draw(ctx, ...at(p));
 
     // drops
     for (const d of game.drops) {
-      const bob = d.y === 0 ? Math.round(Math.sin(d.t * 5 + d.x) * 0.6) : 0;
-      TA.drawIcon(ctx, d.item, d.x - camX, gy - d.y - bob);
+      const bob = d.y === 0 ? Math.sin(d.t * 5 + d.x) * 0.6 : 0;
+      TA.drawIcon(ctx, d.item, sx(d.x), this.Y(d.base + d.y + bob));
     }
-    for (const a of game.arrows) a.draw(ctx, camX, gy);
-    game.fx.draw(ctx, camX, gy);
+    for (const a of game.arrows) a.draw(ctx, camX, this.baseY);
+    game.fx.draw(ctx, camX, this.baseY);
+
+    // foreground: right halves of archways, then things standing nearer than the path
+    for (const o of mid) if (o.arch) this.drawObj(ctx, game, o, sx(o.x), this.Y(o.y || 0), t, { half: 1 });
+    for (const b of game.buildings) this.drawBuilding(ctx, game, b, sx(b.x), t, 1);
+    const ps = sx(p.x), py = this.Y(p.y);
+    for (const o of objs) if (o.front) {
+      const x = sx(o.x), by = this.Y(o.y || 0) + (o.dy || 0), w = TA.objW(o), h = TA.objH(o);
+      // see-through when it would hide the player
+      const hides = h > 9 && Math.abs(x - ps) < w / 2 + 3 && py > by - h - 2;
+      this.drawObj(ctx, game, o, x, by, t, { alpha: hides ? 0.45 : 1 });
+    }
+    if (skyVis) this.drawCliffs(ctx, game, camX);
 
     // darkness & light
-    this.drawLight(game, objs, camX, dark);
+    this.drawLight(game, objs, camX);
 
-    // rain
-    if (game.isRaining()) {
-      ctx.fillStyle = 'rgba(143,211,255,0.55)';
-      const tt = performance.now() / 1000;
-      for (let i = 0; i < 90; i++) {
-        const rx = ((TA.hash(i, 1) % 1000) + tt * 40 - camX * 0.2) % (W + 20);
-        const ry = ((TA.hash(i, 2) % 1000) + tt * 260) % (gy + 10);
-        ctx.fillRect(Math.round(rx), Math.round(ry), 1, 3);
+    if (skyVis) {
+      // weather and colour grading belong to the open air
+      ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, this.baseY + TA.CRUST); ctx.clip();
+      this.drawWeather(ctx, game, camX);
+      ctx.restore();
+      // foreground silhouettes (parallax faster than the world)
+      const fgf = 1.35, seg = 220;
+      const fx0 = Math.floor((camX * fgf) / seg) - 1, fx1 = Math.floor(((camX + W) * fgf) / seg) + 1;
+      for (let i = fx0; i <= fx1; i++) {
+        const h = TA.hash(game.seed, i, 31);
+        if (h % 100 > 30) continue;
+        const spr = ['sil_a', 'sil_b', 'sil_c', 'sil_d'][h % 4];
+        TA.drawSpr(ctx, spr, i * seg + (h >>> 8) % 120 - camX * fgf, this.baseY + this.h - this.groundY + 12, (h >>> 4) % 2 === 0);
       }
-      ctx.fillStyle = 'rgba(40,40,70,0.18)'; ctx.fillRect(0, 0, W, this.h);
     }
-
-    // foreground silhouettes (parallax faster than the world)
-    const fgf = 1.35, seg = 220;
-    const fx0 = Math.floor((camX * fgf) / seg) - 1, fx1 = Math.floor(((camX + W) * fgf) / seg) + 1;
-    for (let i = fx0; i <= fx1; i++) {
-      const h = TA.hash(game.seed, i, 31);
-      if (h % 100 > 38) continue;
-      const spr = ['sil_a', 'sil_b', 'sil_c', 'sil_d'][h % 4];
-      const sx = i * seg + (h >> 8) % 120 - camX * fgf;
-      TA.drawSpr(ctx, spr, sx, this.h + 10, (h >> 4) % 2 === 0);
-    }
+    if (game.flash > 0) { ctx.fillStyle = `rgba(230,240,255,${Math.min(0.75, game.flash)})`; ctx.fillRect(0, 0, W, this.h); }
 
     // floating numbers
     for (const ft of game.fx.texts) {
       const a = 1 - ft.t / 1.1;
-      TA.pixelText(ctx, ft.text, ft.x - camX, gy - ft.y - ft.t * 14, ft.color, a);
+      TA.pixelText(ctx, ft.text, ft.x - camX, this.Y(ft.y) - ft.t * 14, ft.color, a);
     }
 
     if (game.fade > 0) { ctx.fillStyle = `rgba(14,10,20,${game.fade})`; ctx.fillRect(0, 0, W, this.h); }
   }
 
-  drawGround(ctx, game, camX) {
-    const gy = this.groundY, W = this.w;
-    const t0 = Math.floor(camX / 16) - 1, t1 = Math.floor((camX + W) / 16) + 1;
-    ctx.fillStyle = '#2e222f'; ctx.fillRect(0, gy + 15, W, this.h - gy);
-    for (let t = t0; t <= t1; t++) {
-      const x = t * 16;
-      const key = TA.BIOMES[game.world.biomeAt(x + 8)].tiles;
-      const im = TA.img[key]; if (!im) continue;
-      const v = TA.GROUND_VARIANTS[TA.hash(game.seed, t, 3) % TA.GROUND_VARIANTS.length];
-      ctx.drawImage(im, v * 16, 0, 16, 16, x - camX, gy, 16, 16);
+  // One world object. opts: dark (back row), half (archway side), alpha
+  drawObj(ctx, game, o, x, by, t, opts = {}) {
+    const dark = !!opts.dark, alpha = opts.alpha ?? 1;
+    const draw = () => {
+      switch (o.kind) {
+        case 'decor': case 'tree': case 'bush': case 'rock':
+          TA.drawSpr(ctx, o.spr, x, by, o.flip, alpha, dark); break;
+        case 'struct':
+          if (o.bld) TA.drawBuilding(ctx, o.bld, 17, x, by, alpha, o.flip, dark); else TA.drawSpr(ctx, o.spr, x, by, o.flip, alpha, dark);
+          break;
+        case 'flag': ctx.fillStyle = '#4d3729'; ctx.fillRect(TA.px(x - 2), by - 22, 1, 23); TA.drawFlag(ctx, o.flag, t, x, by - 8); break;
+        case 'mushroom': TA.drawIcon(ctx, 'mushroom', x, by); break;
+        case 'glow': TA.drawSpr(ctx, 'glowshroom', x, by); break;
+        case 'wildcrop': TA.drawCrop(ctx, o.crop, 4, x, by); break;
+        case 'field':
+          if (TA.img.soil) ctx.drawImage(TA.img.soil, 16, 0, 16, 6, TA.px(x - 8), by - 1, 16, 6);
+          TA.drawCrop(ctx, o.crop, o.stage, x, by + 1);
+          break;
+        case 'campfire': {
+          const im = TA.img.campfire; if (im) ctx.drawImage(im, (Math.floor(t * 8) % 4) * 16, 0, 16, 16, TA.px(x - 8), by - 16, 16, 16);
+          break;
+        }
+        case 'chest': {
+          const im = TA.img.chest; if (im) ctx.drawImage(im, game.world.opened[o.id] ? 16 : 0, 0, 16, 16, TA.px(x - 8), by - 16, 16, 16);
+          break;
+        }
+        case 'mouth': TA.drawSpr(ctx, 'cave_mouth', x, by + 1); break;
+        case 'portal': {
+          TA.drawSpr(ctx, 'e_portal', x, by);
+          const pulse = 0.35 + 0.25 * Math.sin(t * 3 + o.x);
+          ctx.globalCompositeOperation = 'lighter';
+          const g = ctx.createRadialGradient(x, by - 6, 0, x, by - 6, 14);
+          g.addColorStop(0, `rgba(143,248,226,${pulse})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = g; ctx.fillRect(x - 14, by - 20, 28, 20);
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.fillStyle = '#8ff8e2';
+          for (let i = 0; i < 4; i++) { const a = t * 1.5 + i * 1.6 + o.x; ctx.fillRect(TA.px(x + Math.cos(a) * 7), TA.px(by - 6 + Math.sin(a * 1.3) * 5), 1, 1); }
+          break;
+        }
+      }
+    };
+    TA.clipHalf(ctx, opts.half || 0, x, draw);
+  }
+
+  // A player building. half: -1 = back pass, 1 = front pass (only walls draw there)
+  drawBuilding(ctx, game, b, x, t, half) {
+    if (x < -80 || x > this.w + 80) return;
+    const gy = this.baseY;
+    if (b.type === 'banner') {
+      if (half > 0) return;
+      ctx.fillStyle = '#4d3729'; ctx.fillRect(TA.px(x - 2), gy - 24, 1, 25);
+      TA.drawFlag(ctx, 'flagBanner', t, x, gy - 10);
+      return;
+    }
+    if (b.isWall) {
+      // archway: you pass in front of the left half and behind the right half
+      TA.clipHalf(ctx, half, x, () => TA.drawBuilding(ctx, b.side < 0 ? 'wall' : 'wall2', b.frame, x, gy));
+      if (half > 0 && b.hp < b.maxHp) {
+        ctx.fillStyle = '#2e222f'; ctx.fillRect(TA.px(x - 8), gy - 20, 16, 2);
+        ctx.fillStyle = '#c8ac99'; ctx.fillRect(TA.px(x - 8), gy - 20, Math.ceil(16 * b.hp / b.maxHp), 2);
+      }
+      return;
+    }
+    if (half > 0) return;
+    TA.drawBuilding(ctx, b.type, b.frame, x, gy);
+    if (!b.built) return;
+    if (b.type === 'watchtower') {
+      // archers look out of the windows; a bright nock flashes as they loose
+      for (const a of b.archers) {
+        const [wx, wy] = a.win, X = TA.px(x + wx) - 1, Y = gy - wy - 1;
+        ctx.fillStyle = '#2e222f'; ctx.fillRect(X, Y, 2, 2);
+        ctx.fillStyle = '#d6b08a'; ctx.fillRect(X + (a.dir < 0 ? 0 : 1), Y, 1, 1);
+        ctx.fillStyle = '#4d3729'; ctx.fillRect(X + (a.dir < 0 ? 1 : 0), Y + 1, 1, 1);
+        if (a.shot < 0.2) { ctx.fillStyle = '#fbb954'; ctx.fillRect(X + (a.dir < 0 ? -1 : 2), Y, 1, 1); }
+      }
+      // pennants for each level above the first
+      for (let l = 1; l < b.level; l++) {
+        const px = TA.px(x + (l === 1 ? -4 : 4));
+        ctx.fillStyle = '#4d3729'; ctx.fillRect(px, gy - 21, 1, 5);
+        ctx.fillStyle = Math.floor(t * 4 + l) % 2 ? '#e83b3b' : '#b33831'; ctx.fillRect(px + 1, gy - 21, 2, 2);
+      }
+    }
+    if (b.type === 'market') {
+      // stocked goods on the counter, and a coin when the till has money in it
+      const items = Object.keys(b.stock).filter(k => b.stock[k] > 0).slice(0, 3);
+      items.forEach((k, i) => TA.drawIcon(ctx, k, x - 8 + i * 8, gy + 1));
+      if (b.till > 0) TA.drawIcon(ctx, 'coin', x, gy - 26 + Math.sin(t * 3) * 1.5);
     }
   }
 
-  drawLight(game, objs, camX, dark) {
-    if (dark <= 0.01) return;
-    const lc = this.light.getContext('2d'), gy = this.groundY, W = this.w, H = this.h;
+  // The ground: a crust of tiles over the earth, holed at every shaft
+  drawGround(ctx, game, camX) {
+    const gy = this.baseY, W = this.w;
+    const t0 = Math.floor(camX / 16) - 1, t1 = Math.floor((camX + W) / 16) + 1;
+    const holes = this.shaftsInView(game, camX);
+    ctx.save(); ctx.beginPath(); ctx.rect(-8, gy - 2, W + 16, TA.CRUST + 4);
+    for (const s of holes) ctx.rect(TA.px(s.x - TA.HOLE - camX), gy - 2, TA.HOLE * 2, TA.CRUST + 4);
+    ctx.clip('evenodd');
+    for (let t = t0; t <= t1; t++) {
+      const x = t * 16;
+      const bd = game.world.band(x + 8);
+      const v = TA.GROUND_VARIANTS[TA.hash(game.seed, t, 3) % TA.GROUND_VARIANTS.length];
+      const ka = TA.BIOMES[bd.a].tiles, kb = TA.BIOMES[bd.b].tiles;
+      const X = TA.px(x - camX);
+      // two tilesets cross-fade tile by tile across the border band
+      if (bd.w < 1 && TA.img[ka]) ctx.drawImage(TA.img[ka], v * 16, 0, 16, 16, X, gy, 16, 16);
+      if (bd.w > 0 && TA.img[kb] && kb !== ka) { ctx.globalAlpha = bd.w; ctx.drawImage(TA.img[kb], v * 16, 0, 16, 16, X, gy, 16, 16); ctx.globalAlpha = 1; }
+      else if (bd.w >= 1 && TA.img[kb]) ctx.drawImage(TA.img[kb], v * 16, 0, 16, 16, X, gy, 16, 16);
+    }
+    ctx.restore();
+    // hole rims, and the trapdoor planks you drop through
+    for (const s of holes) {
+      const L = TA.px(s.x - TA.HOLE - camX), R = L + TA.HOLE * 2;
+      ctx.fillStyle = '#2e222f'; ctx.fillRect(L - 1, gy, 1, TA.CRUST); ctx.fillRect(R, gy, 1, TA.CRUST);
+      for (let x = L; x < R; x += 4) {
+        ctx.fillStyle = '#805c45'; ctx.fillRect(x, gy, 3, 2);
+        ctx.fillStyle = '#4d3729'; ctx.fillRect(x, gy + 2, 3, 1);
+      }
+    }
+  }
+
+  // Rock walls around hidden biomes: taller than the screen, ragged and
+  // stratified, lit from the left, with moss on the ledges
+  drawCliffs(ctx, game, camX) {
+    const gy = this.baseY, seed = game.seed;
+    const [deep, base, speck, rim, moss] = ['#2e222f', '#625565', '#45293f', '#7f708a', '#239063'];
+    for (const e of game.world.cliffsIn(camX - 80, camX + this.w + 80)) {
+      for (let y = gy + 4, k = 0; y > -4; y -= 2, k++) {
+        const up = gy - y;
+        // flares out at the foot, ragged all the way up
+        const flare = Math.max(0, 14 - up * 0.35);
+        const l = e - TA.CLIFF_W - 4 - flare + TA.noise1(seed ^ e, k / 5) * 6;
+        const r = e + TA.CLIFF_W + 4 + flare - TA.noise1(seed ^ (e + 1), k / 5) * 6;
+        const L = TA.px(l - camX), R = TA.px(r - camX);
+        ctx.fillStyle = base; ctx.fillRect(L, y, R - L, 2);
+        ctx.fillStyle = rim; ctx.fillRect(L, y, 3, 2);
+        ctx.fillStyle = '#4b3f52'; ctx.fillRect(R - 6, y, 6, 2);
+        ctx.fillStyle = deep; ctx.fillRect(R - 1, y, 1, 2);
+        // cracks and speckles
+        const h = TA.hash(seed, e, k);
+        ctx.fillStyle = speck;
+        if (h % 3 === 0) ctx.fillRect(L + 4 + (h >>> 3) % Math.max(1, R - L - 10), y, 2, 2);
+        if (h % 7 === 0) ctx.fillRect(L + 4 + (h >>> 9) % Math.max(1, R - L - 10), y, 1, 4);
+        // strata: a ledge line every so often, with moss on top
+        if (k % 9 === 0 && k > 2) {
+          ctx.fillStyle = rim; ctx.fillRect(L - 1, y, R - L - 4, 1);
+          ctx.fillStyle = moss;
+          for (let x = L; x < R - 6; x += 3) if (TA.hash(seed, e, k, x) % 3) ctx.fillRect(x, y - 1, 2, 1);
+        }
+      }
+      // grass and boulders at the foot
+      TA.drawSpr(ctx, 'grass_t', e - TA.CLIFF_W - 18 - camX, gy + 3);
+      TA.drawSpr(ctx, 'grass_o', e + TA.CLIFF_W + 18 - camX, gy + 3, true);
+      TA.drawSpr(ctx, 'rock_a', e - TA.CLIFF_W - 12 - camX, gy + 5);
+      TA.drawSpr(ctx, 'rock_c', e + TA.CLIFF_W + 14 - camX, gy + 5);
+    }
+  }
+
+  // ------------------------------------------------------------ caves
+  // Cave air: what you see wherever the earth is hollow
+  drawCaveBack(game, camX) {
+    const ctx = this.ctx, W = this.w, top = Math.max(0, this.baseY + TA.CRUST);
+    const cb = TA.CAVE_BIOMES[game.world.caveBiomeAt(camX + W / 2)];
+    ctx.fillStyle = cb.bg; ctx.fillRect(0, top, W, this.h - top);
+    const bg = TA.img.caveBg;
+    if (bg) {
+      // far walls, slow parallax, hung around the middle of the caves
+      const f = 0.35, by = TA.px(this.Y(-TA.CAVE_DEPTH + 150) + this.camY * 0.25);
+      let ox = TA.px(-(camX * f) % 160); if (ox > 0) ox -= 160;
+      ctx.globalAlpha = 0.85;
+      for (let x = ox; x < W; x += 160) ctx.drawImage(bg, 0, cb.pal * 96, 160, 96, x, by, 160, 96);
+      ctx.globalAlpha = 1;
+    }
+    // daylight falling down the shafts
+    const day = 1 - game.darkness() / 0.62;
+    for (const s of this.shaftsInView(game, camX)) {
+      const x = s.x - camX, y0 = this.baseY, bottom = this.Y(game.world.floorAt(s.x));
+      const g = ctx.createLinearGradient(0, y0, 0, bottom);
+      g.addColorStop(0, `rgba(255,236,190,${0.08 + 0.2 * day})`); g.addColorStop(1, 'rgba(255,236,190,0)');
+      ctx.fillStyle = g; ctx.fillRect(TA.px(x - 12), y0, 24, bottom - y0);
+    }
+  }
+  shaftsInView(game, camX) {
+    const out = [], w = game.world;
+    for (let i = w.regionOf(camX - 60); i <= w.regionOf(camX + this.w + 60); i++)
+      for (const s of w.shaftsOfRegion(i)) if (s.x > camX - 60 && s.x < camX + this.w + 60) out.push(s);
+    return out;
+  }
+  drawCaveRock(game, camX) {
+    const ctx = this.ctx, w = game.world, im = TA.img.cave; if (!im) return;
+    const c0 = Math.floor(camX / 8) - 1, c1 = Math.floor((camX + this.w) / 8) + 1;
+    for (let c = c0; c <= c1; c++) {
+      const X = TA.px(c * 8 - camX);
+      const pal = TA.CAVE_BIOMES[w.caveBiomeVis(c * 8 + 4)].pal * 8;
+      const F = w.floorCol(c), C = w.ceilCol(c);
+      // floor: crust on top, rock below to the bottom of the screen
+      const yF = this.Y(F);
+      ctx.drawImage(im, 0, pal, 8, 8, X, yF, 8, 8);
+      for (let y = yF + 8, k = 0; y < this.h; y += 8, k++) ctx.drawImage(im, (TA.hash(c, k) % 3 ? 8 : 16), pal, 8, 8, X, y, 8, 8);
+      // the step face where the floor drops away
+      const Fl = w.floorCol(c - 1), Fr = w.floorCol(c + 1);
+      ctx.fillStyle = TA.CAVE_EDGE[pal / 8];
+      if (Fl < F) ctx.fillRect(X, yF, 1, F - Fl);
+      if (Fr < F) ctx.fillRect(X + 7, yF, 1, F - Fr);
+      // the earth above the cave, from the cave roof up to the underside of the ground
+      if (C < -TA.CRUST) {
+        const yC = this.Y(C), yTop = this.Y(-TA.CRUST);
+        ctx.drawImage(im, 24, pal, 8, 8, X, yC - 8, 8, 8);
+        for (let y = yC - 16, k = 0; y >= yTop - 0.01 && y > -8; y -= 8, k++) ctx.drawImage(im, (TA.hash(c, k, 7) % 3 ? 8 : 16), pal, 8, 8, X, y, 8, 8);
+        // drips off the roof, and the walls of any shaft beside this column
+        const h = TA.hash(game.seed, c, 77);
+        ctx.fillStyle = TA.CAVE_EDGE[pal / 8];
+        if (h % 5 === 0) { ctx.fillRect(X + (h >>> 4) % 6, yC, 2, 2 + (h >>> 8) % 4); ctx.fillRect(X + (h >>> 4) % 6, yC + 2, 1, 2 + (h >>> 8) % 3); }
+        const Cl = w.ceilCol(c - 1), Cr = w.ceilCol(c + 1);
+        if (Cl > C) { const y = this.Y(Math.min(Cl, -TA.CRUST)); ctx.fillRect(X, y, 1, yC - y); }
+        if (Cr > C) { const y = this.Y(Math.min(Cr, -TA.CRUST)); ctx.fillRect(X + 7, y, 1, yC - y); }
+      }
+    }
+    // ledges
+    for (const pl of w.platformsIn(camX - 8, camX + this.w + 8)) {
+      const pal = TA.CAVE_BIOMES[w.caveBiomeVis((pl.x0 + pl.x1) / 2)].pal * 8;
+      for (let x = pl.x0; x < pl.x1; x += 8) {
+        const tw = Math.min(8, pl.x1 - x);
+        ctx.drawImage(im, 32, pal, tw, 4, TA.px(x - camX), this.Y(pl.y), tw, 4);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------ weather & colour
+  drawWeather(ctx, game, camX) {
+    const W = this.w, H = this.h, w = game.weatherNow(), d = w.def, k = w.k;
+    const tt = performance.now() / 1000;
+    if (d.rain && k > 0) {
+      const n = Math.round(d.rain * k), slant = d.lightning ? 70 : 30;
+      ctx.fillStyle = 'rgba(143,211,255,0.55)';
+      for (let i = 0; i < n; i++) {
+        const rx = ((TA.hash(i, 1) % 1000) + tt * slant - camX * 0.2) % (W + 20);
+        const ry = ((TA.hash(i, 2) % 1000) + tt * (220 + (i % 5) * 20)) % (this.baseY + 10);
+        ctx.fillRect(Math.round(rx), Math.round(ry), 1, 3);
+      }
+      // splashes on the ground
+      ctx.fillStyle = 'rgba(199,220,208,0.6)';
+      for (let i = 0; i < n / 6; i++) if ((tt * 8 + i) % 3 < 0.4) ctx.fillRect((TA.hash(i, 9, Math.floor(tt * 3)) % W), this.baseY - 1, 1, 1);
+    }
+    if (d.fog && k > 0) {
+      const g = ctx.createLinearGradient(0, 0, 0, this.baseY + 8);
+      g.addColorStop(0, `rgba(170,178,190,${0.15 * k})`); g.addColorStop(1, `rgba(186,192,200,${d.fog * k})`);
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      // drifting banks, soft at the ends
+      for (let i = 0; i < 6; i++) {
+        const len = 60 + (i % 3) * 24, span = W + len * 2;
+        const fx = (((TA.hash(i, 4) % 400) + tt * (3 + i) - camX * 0.6) % span + span) % span - len;
+        const fy = this.baseY - 9 - (i % 3) * 6;
+        for (let j = 0; j < 4; j++) {
+          ctx.fillStyle = `rgba(205,214,220,${0.07 * k})`;
+          ctx.fillRect(TA.px(fx + j * 8), fy - j * 0.5, len - j * 16, 3 + j);
+        }
+      }
+    }
+    // colour grade: the biome's own tint, then the weather's
+    const bd = game.world.band(camX + W / 2);
+    ctx.globalCompositeOperation = 'soft-light';
+    for (const [b, a] of [[bd.a, 1 - bd.w], [bd.b, bd.w]]) {
+      const [col, s] = TA.BIOMES[b].grade;
+      if (a > 0 && s > 0) { ctx.globalAlpha = a * s; ctx.fillStyle = col; ctx.fillRect(0, 0, W, H); }
+    }
+    if (d.warm && k > 0) { ctx.globalAlpha = d.warm * k; ctx.fillStyle = '#ffc070'; ctx.fillRect(0, 0, W, H); }
+    ctx.globalAlpha = 1;
+    if (d.tone && k > 0) {
+      ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = d.tone[1] * k;
+      ctx.fillStyle = d.tone[0]; ctx.fillRect(0, 0, W, H);
+    }
+    if (d.sat > 0 && k > 0) {
+      ctx.globalCompositeOperation = 'saturation'; ctx.globalAlpha = d.sat * k;
+      ctx.fillStyle = '#808080'; ctx.fillRect(0, 0, W, H);
+    }
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  }
+
+  // Darkness: the time of day above ground, always deep dark below it
+  drawLight(game, objs, camX) {
+    const W = this.w, H = this.h, sd = game.darkness(), cd = 0.76;
+    const top = this.baseY + TA.CRUST; // where the earth starts
+    if (sd <= 0.01 && top >= H) return;
+    const lc = this.ctxOf(this.light);
     lc.globalCompositeOperation = 'source-over';
     lc.clearRect(0, 0, W, H);
-    lc.fillStyle = `rgba(12,8,32,${dark})`;
-    lc.fillRect(0, 0, W, H);
+    if (top > 0) { lc.fillStyle = `rgba(12,8,32,${sd})`; lc.fillRect(0, 0, W, top); }
+    if (top < H) {
+      const g = lc.createLinearGradient(0, top, 0, top + 30);
+      g.addColorStop(0, `rgba(10,6,24,${Math.max(sd, 0.35)})`); g.addColorStop(1, `rgba(8,5,16,${cd})`);
+      lc.fillStyle = g; lc.fillRect(0, top, W, H - top);
+    }
     lc.globalCompositeOperation = 'destination-out';
     const lights = [];
     const p = game.player;
-    lights.push([p.x, gy - 8, 34]);
+    lights.push([p.x, this.Y(p.y + 8), p.layer === 'c' ? 58 : 34]);
     for (const o of objs) {
-      if (o.kind === 'campfire') lights.push([o.x, gy - 6, o.light + Math.sin(performance.now() / 120 + o.x) * 2]);
-      if (o.light && o.kind === 'struct') lights.push([o.x, gy - 8, o.light]);
-      if (o.kind === 'wildcrop') lights.push([o.x, gy - 6, 14]);
+      const oy = this.Y(o.y || 0);
+      if (o.kind === 'campfire') lights.push([o.x, oy - 6, o.light + Math.sin(performance.now() / 120 + o.x) * 2]);
+      else if (o.kind === 'portal') lights.push([o.x, oy - 6, 34]);
+      else if (o.light && (o.kind === 'struct' || o.kind === 'rock' || o.kind === 'glow' || o.kind === 'mushroom')) lights.push([o.x, oy - 6, o.light]);
+      else if (o.kind === 'wildcrop') lights.push([o.x, oy - 6, 14]);
     }
+    // daylight down the shafts
+    for (const s of this.shaftsInView(game, camX))
+      for (let y = Math.max(this.baseY, -24); y < Math.min(H, this.Y(game.world.floorAt(s.x))); y += 24) lights.push([s.x, y, 6 + 24 * (1 - sd)]);
     for (const b of game.buildings) {
       if (!b.built) continue;
-      if (b.type === 'lighttower') lights.push([b.x, gy - 40, 110]);
-      else if (b.type === 'hut' || b.type === 'market' || b.type === 'manor') lights.push([b.x, gy - 10, 34]);
-      else if (b.type === 'banner') lights.push([b.x, gy - 14, 22]);
+      if (b.type === 'lighttower') lights.push([b.x, this.baseY - 40, 110]);
+      else if (b.type === 'hut' || b.type === 'market' || b.type === 'manor') lights.push([b.x, this.baseY - 10, 34]);
+      else if (b.type === 'banner') lights.push([b.x, this.baseY - 14, 22]);
     }
-    for (const pl of game.plots) if (pl.crop === 'moonflower' && game.cropStage(pl) >= 3) lights.push([pl.x, gy - 6, 16]);
+    for (const pl of game.plots) if (pl.crop === 'moonflower' && game.cropStage(pl) >= 3) lights.push([pl.x, this.baseY - 6, 16]);
     for (const [lx, ly, r] of lights) {
-      const sx = lx - camX; if (sx < -r || sx > W + r) continue;
+      const sx = lx - camX; if (r <= 1 || sx < -r || sx > W + r) continue;
       const g = lc.createRadialGradient(sx, ly, 0, sx, ly, r);
       g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(0.55, 'rgba(0,0,0,0.75)'); g.addColorStop(1, 'rgba(0,0,0,0)');
       lc.fillStyle = g; lc.fillRect(sx - r, ly - r, r * 2, r * 2);
     }
-    this.ctx.drawImage(this.light, 0, 0);
+    this.blit(this.light, 1, true);
     // warm glow
-    const ctx = this.ctx;
-    ctx.globalCompositeOperation = 'lighter';
+    const gc = this.ctxOf(this.glow);
+    gc.clearRect(0, 0, W, H);
     for (const [lx, ly, r] of lights) {
-      const sx = lx - camX; if (sx < -r || sx > W + r) continue;
-      const g = ctx.createRadialGradient(sx, ly, 0, sx, ly, r * 0.6);
-      g.addColorStop(0, `rgba(80,45,10,${0.35 * dark})`); g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g; ctx.fillRect(sx - r, ly - r, r * 2, r * 2);
+      const sx = lx - camX; if (r <= 1 || sx < -r || sx > W + r) continue;
+      const g = gc.createRadialGradient(sx, ly, 0, sx, ly, r * 0.6);
+      g.addColorStop(0, `rgba(80,45,10,${0.35 * (ly > top ? cd : sd)})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+      gc.fillStyle = g; gc.fillRect(sx - r, ly - r, r * 2, r * 2);
     }
-    ctx.globalCompositeOperation = 'source-over';
+    this.ctx.globalCompositeOperation = 'lighter';
+    this.blit(this.glow, 1, true);
+    this.ctx.globalCompositeOperation = 'source-over';
   }
 };
 
 TA.GROUND_VARIANTS = [1, 2, 3, 4, 5, 6, 7, 10, 11];
+TA.CAVE_EDGE = ['#7f708a', '#905ea9', '#239063', '#c8ac99', '#9babb2'];
 
 // ---------------------------------------------------------------- tiny 3x5 pixel font for numbers
 TA.GLYPHS = {
@@ -287,7 +606,7 @@ TA.GLYPHS = {
 TA.pixelText = function (ctx, text, x, y, color, alpha = 1) {
   const chars = String(text).split('');
   const w = chars.length * 4 - 1;
-  let cx = Math.round(x - w / 2); y = Math.round(y);
+  let cx = TA.px(x - w / 2); y = TA.px(y);
   ctx.globalAlpha = alpha;
   for (const ch of chars) {
     const g = TA.GLYPHS[ch];

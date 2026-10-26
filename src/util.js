@@ -75,23 +75,25 @@ TA.Input = class {
   constructor() {
     this.down = new Set();
     this.pressed = new Set();   // edge-triggered this frame
-    this.touch = { left: false, right: false, run: false };
+    this.touch = { left: false, right: false, run: false, jump: false, down: false };
     addEventListener('keydown', e => {
       const k = this.norm(e);
       if (!k) return;
-      if (['left', 'right', 'action', 'build', 'seed', 'menu', 'eat'].includes(k)) e.preventDefault();
+      if (['left', 'right', 'action', 'build', 'seed', 'menu', 'eat', 'jump', 'down'].includes(k)) e.preventDefault();
       if (!this.down.has(k)) this.pressed.add(k);
       this.down.add(k);
     });
     addEventListener('keyup', e => { const k = this.norm(e); if (k) this.down.delete(k); });
-    addEventListener('blur', () => { this.down.clear(); this.touch.left = this.touch.right = false; });
+    addEventListener('blur', () => { this.down.clear(); for (const k in this.touch) this.touch[k] = false; });
   }
   norm(e) {
     switch (e.code) {
       case 'ArrowLeft': case 'KeyA': return 'left';
       case 'ArrowRight': case 'KeyD': return 'right';
       case 'ShiftLeft': case 'ShiftRight': return 'run';
-      case 'Space': case 'KeyE': case 'Enter': return 'action';
+      case 'Space': case 'KeyW': case 'ArrowUp': return 'jump';
+      case 'KeyS': case 'ArrowDown': return 'down';
+      case 'KeyE': case 'Enter': return 'action';
       case 'KeyB': return 'build';
       case 'KeyQ': case 'Tab': return 'seed';
       case 'KeyF': return 'eat';
@@ -103,7 +105,7 @@ TA.Input = class {
     }
     return null;
   }
-  isDown(k) { return this.down.has(k) || (k === 'left' && this.touch.left) || (k === 'right' && this.touch.right) || (k === 'run' && this.touch.run); }
+  isDown(k) { return this.down.has(k) || !!this.touch[k]; }
   hit(k) { return this.pressed.has(k); }
   press(k) { this.pressed.add(k); }
   endFrame() { this.pressed.clear(); }

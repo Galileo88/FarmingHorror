@@ -7,8 +7,24 @@ window.TA = window.TA || {};
 TA.DAY_SECONDS = 420;          // real seconds per in-game day
 TA.START_HOUR = 7.5;
 TA.CHUNK = 256;                // world chunk width (px)
-TA.REGION = 1400;              // biome region width (px)
+TA.REGION = 2400;              // biome region width (px)
+TA.BLEND = 300;                // half width of the band where two biomes mix
 TA.CLAIM_RADIUS = 176;         // land claimed by a banner, each side
+TA.CLIFF_W = 22;               // half width of the rock walls around hidden biomes
+TA.STALL_PREMIUM = 1.25;       // travellers pay this much over market price at your stall
+
+// Movement (px, px/s, px/s^2). Heights are measured up from the surface, or
+// up from the bottom of the caves when underground.
+TA.GRAVITY = 420;
+TA.JUMP_V = 172;               // apex ~35px: clears a 24px ledge, not a 32px one
+TA.STEP_UP = 8;                // ledges this low are walked onto
+TA.PLAYER_H = 13;
+// The caves lie this far below the surface, in the same space: the ground is a
+// TA.CRUST thick crust over solid earth, and shafts are holes TA.HOLE either side
+// of their centre, covered by a trapdoor you drop through.
+TA.CAVE_DEPTH = 240;
+TA.CRUST = 16;
+TA.HOLE = 12;
 
 // ---------------------------------------------------------------- images
 TA.IMAGES = {
@@ -29,13 +45,16 @@ TA.IMAGES = {
   mushroom: 'assets/icons/mushroom.png',
   meat: 'assets/icons/meat.png',
   potion: 'assets/icons/potion.png',
+  cave: 'assets/art/cave.png',
+  caveBg: 'assets/art/cave_bg.png',
 };
 ['hut', 'market', 'armory', 'defense', 'lighttower', 'watchtower', 'barracks', 'manor', 'spire',
   'wall', 'wall2', 'ruin1', 'ruin2', 'ruingate', 'ruintower', 'elf1', 'elf2', 'elf4', 'elf6', 'elf7']
   .forEach(n => TA.IMAGES['b_' + n] = `assets/buildings/${n}.png`);
 ['worker1', 'worker2', 'farmer1', 'lumberjack1', 'miner1', 'skeleton', 'zombie', 'goblin', 'goblin_chief',
   'kobold', 'ratfolk', 'bandit', 'demon', 'elf', 'dwarf', 'guard', 'archer',
-  'dog_beagle', 'dog_black', 'dog_white', 'dog_shepherd']
+  'dog_beagle', 'dog_black', 'dog_white', 'dog_shepherd', 'spearman', 'wizard', 'smith', 'farmer2', 'lumber2', 'miner2',
+  'folk_blue', 'folk_green', 'folk_red', 'folk_plum']
   .forEach(n => TA.IMAGES['u_' + n] = `assets/units/${n}.png`);
 TA.PARALLAX_SETS = {
   mountains_day: 7, mountains_dusk: 7, mountains_night: 7,
@@ -95,6 +114,10 @@ TA.SPR = {
   e_arcade: ['elvishTiles', 64, 29, 64, 51], e_crystaltower: ['elvishTiles', 165, 22, 20, 74], e_pillar: ['elvishTiles', 138, 33, 12, 63],
   e_house: ['elvishTiles', 6, 73, 20, 23], e_crystalhouse: ['elvishTiles', 37, 82, 21, 30], e_portal: ['elvishTiles', 5, 98, 21, 14],
   e_hedge: ['elvishTiles', 64, 89, 64, 7], e_arches: ['elvishTiles', 64, 103, 48, 9],
+  // caves (generated art)
+  crystal_t: ['cave', 48, 0, 10, 10], crystal_p: ['cave', 58, 0, 10, 10], glowshroom: ['cave', 68, 4, 6, 6],
+  stalag_0: ['cave', 48, 12, 7, 12], stalag_1: ['cave', 56, 12, 7, 12], stalag_2: ['cave', 64, 12, 7, 12], stalag_3: ['cave', 72, 12, 7, 12],
+  cave_mouth: ['cave', 0, 48, 40, 24],
 };
 
 TA.TREE_SETS = {
@@ -124,6 +147,25 @@ TA.SHEETS = {
   demon: { img: 'u_demon', fw: 32, fh: 16, anims: { ...CLAN, block: [4, 4, 8, 0], hit: [5, 3, 10, 0], death: [6, 8, 10, 0] } },
   bandit: { img: 'u_bandit', fw: 32, fh: 16, anims: { ...CLAN, block: [5, 4, 8, 0], hit: [6, 3, 10, 0], death: [7, 8, 10, 0] } },
 };
+const FOLK = { idle: [0, 8, 7, 1], walk: [1, 8, 9, 1], hit: [2, 3, 10, 0], death: [3, 8, 9, 0] };
+for (const c of ['blue', 'green', 'red', 'plum']) TA.SHEETS['folk_' + c] = { img: 'u_folk_' + c, fw: 32, fh: 16, anims: FOLK };
+TA.SHEETS.spearman = { img: 'u_spearman', fw: 16, fh: 16, anims: { ...CLAN, hit: [4, 3, 10, 0], death: [5, 8, 10, 0] } };
+TA.SHEETS.wizard = { img: 'u_wizard', fw: 16, fh: 16, anims: { ...CLAN, hit: [4, 3, 10, 0], death: [5, 8, 10, 0] } };
+// townsfolk at work: one looping anim each
+TA.SHEETS.smith = { img: 'u_smith', fw: 32, fh: 16, anims: { idle: [0, 4, 7, 1], work: [0, 4, 7, 1] } };
+TA.SHEETS.farmer2 = { img: 'u_farmer2', fw: 32, fh: 16, anims: { idle: [0, 6, 8, 1], work: [0, 6, 8, 1], water: [1, 6, 8, 1] } };
+TA.SHEETS.lumber2 = { img: 'u_lumber2', fw: 32, fh: 16, anims: { idle: [0, 8, 10, 1], work: [0, 8, 10, 1] } };
+TA.SHEETS.miner2 = { img: 'u_miner2', fw: 32, fh: 16, anims: { idle: [0, 6, 9, 1], work: [0, 6, 9, 1] } };
+// who walks the streets
+TA.WALKERS = ['folk_blue', 'folk_green', 'folk_red', 'folk_plum', 'trader', 'wizard'];
+TA.TRAVELLERS = ['trader', 'folk_blue', 'folk_green', 'folk_plum', 'elf', 'dwarf', 'wizard'];
+TA.FOLK_LINES = [
+  'Lovely weather for it.', 'Mind the dark, friend. Things walk at night.', 'The old caves run under everything, they say.',
+  'My gran swore she saw a portal humming in some ruins.', 'Travellers pay well for fresh produce.',
+  'There is a valley past the cliffs that no road reaches.', 'Fresh bread! ...oh, sold out.', 'Have you tried jumping? Builds character.',
+  'Watchtowers hold more archers once you build them up.', 'The market stalls fill up on fair days.',
+];
+
 const DOG = { move: [0, 4, 10, 1], idle: [1, 3, 5, 1], interact: [2, 2, 6, 1], bark: [5, 2, 6, 0], stretch: [6, 6, 8, 0],
   sit: [7, 2, 6, 0], sitidle: [8, 9, 5, 1], sitbark: [9, 2, 6, 0], sleep: [12, 3, 4, 0], sleepidle: [13, 1, 2, 1] };
 ['beagle', 'black', 'white', 'shepherd'].forEach(c => TA.SHEETS['dog_' + c] = { img: 'u_dog_' + c, fw: 16, fh: 16, anims: DOG });
@@ -143,12 +185,20 @@ TA.BUILDABLE = {
   hut: { name: 'Hut', desc: 'Sleep through the night, save, and wake here if you fall.', cost: { wood: 12, stone: 4 }, width: 32 },
   market: { name: 'Market', desc: 'Sell your harvest any time.', cost: { wood: 14, stone: 6 }, width: 32, need: 'hut' },
   lighttower: { name: 'Light Tower', desc: 'Lights the homestead. Night creatures will not enter its glow.', cost: { wood: 10, stone: 14 }, width: 24, need: 'hut' },
-  watchtower: { name: 'Watchtower', desc: 'An archer keeps watch and shoots creatures that come close.', cost: { wood: 18, stone: 10, coin: 20 }, width: 26, need: 'hut' },
+  watchtower: { name: 'Watchtower', desc: 'Archers shoot from its windows at creatures that come close. Upgrade it for more archers.', cost: { wood: 18, stone: 10, coin: 20 }, width: 26, need: 'hut' },
   armory: { name: 'Armory', desc: 'Upgrade your scythe, axe and pickaxe.', cost: { wood: 20, stone: 16, coin: 30 }, width: 32, need: 'market' },
   wall: { name: 'Wall', desc: 'Built at the edge of your land. Blocks creatures until broken.', cost: { stone: 10 }, width: 32, need: 'hut', edge: true },
   barracks: { name: 'Barracks', desc: 'A guard patrols your land day and night.', cost: { wood: 30, stone: 24, coin: 80 }, width: 60, need: 'armory' },
   manor: { name: 'Manor', desc: 'Widens your claim and marks you as lord of these lands.', cost: { wood: 50, stone: 40, coin: 150, gem: 2 }, width: 60, need: 'barracks' },
 };
+// Watchtower levels: archers stationed (one per window) and the cost to reach that level
+TA.TOWER_LEVELS = [null,
+  { archers: 1 },
+  { archers: 2, cost: { wood: 14, stone: 12, coin: 40 } },
+  { archers: 3, cost: { wood: 20, stone: 18, coin: 90, gem: 1 } },
+];
+// Window positions on the tower sprite: [x offset from centre, height above ground]
+TA.TOWER_WINDOWS = [[-2, 8], [3, 8], [-2, 5]];
 TA.BUILD_ORDER = ['banner', 'hut', 'market', 'lighttower', 'watchtower', 'wall', 'armory', 'barracks', 'manor'];
 
 // ---------------------------------------------------------------- crops & items
@@ -185,30 +235,61 @@ for (const [k, c] of Object.entries(TA.CROPS)) {
 // tileset: which sheet's row-0 ground tiles to use. parallax: base set name (day/dusk/night variants if present)
 TA.BIOMES = {
   meadow: {
-    name: 'Greenmeadow', tiles: 'starter', parallax: 'mountains', color: '#4bb0a5', fertility: 1.0,
+    name: 'Greenmeadow', tiles: 'starter', parallax: 'mountains', color: '#4bb0a5', fertility: 1.0, grade: ['#000000', 0],
     trees: { teal: 0.75, olive: 0.25 }, treeDensity: 0.55, rockDensity: 0.2, bushDensity: 0.25,
-    night: ['zombie', 'skeleton'], day: [], danger: 1, pois: ['camp', 'village', 'ruin', 'dog'],
+    night: ['zombie', 'skeleton'], day: [], danger: 1, pois: ['village', 'village', 'camp', 'ruin', 'dog', 'town'], cave: { caverns: 3, fungal: 1 },
   },
   woods: {
-    name: 'Amberwood', tiles: 'starter', parallax: 'mountains', color: '#a2a947', fertility: 0.9,
+    name: 'Amberwood', tiles: 'starter', parallax: 'mountains', color: '#a2a947', fertility: 0.9, grade: ['#d9a44a', 0.14],
     trees: { teal: 0.25, olive: 0.75 }, treeDensity: 1.0, rockDensity: 0.25, bushDensity: 0.45, mushrooms: true,
-    night: ['kobold', 'ratfolk', 'skeleton'], day: [], danger: 2, pois: ['ruin', 'dwarves', 'camp', 'dog'],
+    night: ['kobold', 'ratfolk', 'skeleton'], day: [], danger: 2, pois: ['ruin', 'dwarves', 'camp', 'dog', 'village'], cave: { fungal: 3, caverns: 2 },
   },
   kingdom: {
-    name: 'Fallen Kingdom', tiles: 'starter', parallax: 'city', color: '#c8ac99', fertility: 0.8,
+    name: 'Fallen Kingdom', tiles: 'starter', parallax: 'city', color: '#c8ac99', fertility: 0.8, grade: ['#c8ac99', 0.12],
     trees: { teal: 0.5, olive: 0.5 }, treeDensity: 0.3, rockDensity: 0.4, bushDensity: 0.15,
-    night: ['skeleton', 'zombie', 'bandit'], day: ['bandit'], danger: 2, pois: ['town', 'ruin', 'village'],
+    night: ['skeleton', 'zombie', 'bandit'], day: ['bandit'], danger: 2, pois: ['city', 'town', 'ruin', 'village'], cave: { bones: 2, caverns: 2 },
   },
   elvish: {
-    name: 'Elderglade', tiles: 'elvishTiles', parallax: 'spikes_teal', color: '#30e1b9', fertility: 1.35,
+    name: 'Elderglade', tiles: 'elvishTiles', parallax: 'spikes_teal', color: '#30e1b9', fertility: 1.35, grade: ['#30e1b9', 0.12],
     trees: { teal: 0.85, olive: 0.15 }, treeDensity: 0.8, rockDensity: 0.15, bushDensity: 0.4,
-    night: ['skeleton'], day: [], danger: 1, pois: ['grove', 'ruin'],
+    night: ['skeleton'], day: [], danger: 1, pois: ['grove', 'ruin', 'village'], cave: { crystal: 3, fungal: 2 },
   },
   badlands: {
-    name: 'Goblin Barrens', tiles: 'goblinTiles', parallax: 'spikes', color: '#cd683d', fertility: 0.5,
+    name: 'Goblin Barrens', tiles: 'goblinTiles', parallax: 'spikes', color: '#cd683d', fertility: 0.5, grade: ['#e6904e', 0.2],
     trees: { teal: 0.1, olive: 0.9 }, treeDensity: 0.2, rockDensity: 0.8, bushDensity: 0.1, gems: true,
-    night: ['goblin', 'demon', 'skeleton'], day: ['goblin'], danger: 3, pois: ['warcamp', 'camp', 'bones'],
+    night: ['goblin', 'demon', 'skeleton'], day: ['goblin'], danger: 3, pois: ['warcamp', 'camp', 'bones', 'ruin'], cave: { bones: 3, caverns: 1 },
   },
+  // Hidden biomes: walled in by cliffs, reached only through the caves (or a lucky portal)
+  vale: {
+    name: 'Lost Vale', tiles: 'elvishTiles', parallax: 'spikes_teal', color: '#a884f3', fertility: 1.7, grade: ['#a884f3', 0.18], hidden: true,
+    trees: { teal: 0.9, olive: 0.1 }, treeDensity: 0.9, rockDensity: 0.3, bushDensity: 0.6, mushrooms: true, gems: true,
+    night: [], day: [], danger: 0, pois: ['shrine', 'grove'], cave: { crystal: 1 },
+  },
+  crater: {
+    name: 'Ember Crater', tiles: 'goblinTiles', parallax: 'spikes', color: '#f68181', fertility: 0.7, grade: ['#e83b3b', 0.2], hidden: true,
+    trees: { teal: 0, olive: 1 }, treeDensity: 0.15, rockDensity: 1.2, bushDensity: 0.1, gems: true, richRocks: true,
+    night: ['demon', 'skeleton'], day: ['skeleton'], danger: 4, pois: ['shrine', 'bones'], cave: { crystal: 1 },
+  },
+};
+
+// Underground biomes. pal = row in assets/art/cave.png
+TA.CAVE_BIOMES = {
+  caverns: { name: 'Echo Caverns', pal: 0, color: '#9babb2', bg: '#1d1720', rocks: 0.5, crystals: 0.1, shrooms: 0.1, mobs: ['skeleton', 'ratfolk'] },
+  crystal: { name: 'Crystal Depths', pal: 1, color: '#a884f3', bg: '#1f1426', rocks: 0.3, crystals: 0.7, shrooms: 0.05, mobs: ['skeleton', 'kobold'] },
+  fungal: { name: 'Fungal Grotto', pal: 2, color: '#1ebc73', bg: '#141c1d', rocks: 0.3, crystals: 0.05, shrooms: 0.7, mobs: ['zombie', 'ratfolk'] },
+  bones: { name: 'Bone Pits', pal: 3, color: '#c8ac99', bg: '#211518', rocks: 0.4, crystals: 0.1, shrooms: 0.1, mobs: ['skeleton', 'zombie', 'bandit'] },
+};
+TA.CLIFF_PAL = 4;
+
+// Weather. tone: [multiply colour, strength], sat = how much colour drains away,
+// sky = grey wash over the sky, warm = golden soft-light
+TA.WEATHER = {
+  clear: { name: '', weight: 34 },
+  sunny: { name: 'sunny', weight: 14, warm: 0.3, sat: -0.15 },
+  overcast: { name: 'overcast', weight: 16, tone: ['#b7bccb', 0.5], sat: 0.25, sky: 0.3 },
+  rain: { name: 'rain', weight: 16, tone: ['#8f9ab5', 0.75], sat: 0.4, sky: 0.5, rain: 90 },
+  storm: { name: 'storm', weight: 7, tone: ['#6b7591', 0.85], sat: 0.55, sky: 0.7, rain: 170, lightning: true },
+  fog: { name: 'fog', weight: 13, fog: 0.42, sat: 0.35, sky: 0.2, morning: true },
 };
 
 // ---------------------------------------------------------------- creatures
@@ -225,6 +306,7 @@ TA.MOBS = {
 
 // ---------------------------------------------------------------- traders
 TA.SHOPS = {
+  hermit: { name: 'Vale Hermit', sells: ['seed_moonflower', 'seed_pumpkin', 'potion'], prices: { potion: 10, seed_moonflower: 10 }, buys: true },
   trader: { name: 'Wandering Trader', sells: ['seed_wheat', 'seed_carrot', 'seed_pumpkin', 'seed_berry', 'meat'],
     prices: { meat: 8 }, buys: true },
   elf: { name: 'Elder of the Glade', sells: ['seed_moonflower', 'seed_berry', 'potion'], prices: { potion: 15 }, buys: true },
