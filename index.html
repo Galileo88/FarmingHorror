@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#2e222f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Tiny Acres</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="ui" class="hidden">
+    <div id="hud-top">
+      <div class="left"><div id="hearts"></div><div id="where"></div></div>
+      <canvas id="map" width="300" height="18"></canvas>
+      <div class="right"><div id="clock"></div><div id="coins"></div></div>
+    </div>
+    <div id="hint"></div>
+    <div id="biome"></div>
+    <div id="prompt"></div>
+    <div id="toasts"></div>
+    <div id="hud-bottom">
+      <div id="res"></div>
+      <button id="seed" title="Switch seed (Q)"></button>
+    </div>
+    <div id="touch">
+      <div class="pad">
+        <button id="t-left" aria-label="Walk left">◀</button>
+        <button id="t-right" aria-label="Walk right">▶</button>
+        <button id="t-run" aria-label="Run">run</button>
+      </div>
+      <div class="acts">
+        <button id="t-menu" aria-label="Menu">☰</button>
+        <button id="t-eat" aria-label="Eat">eat</button>
+        <button id="t-build" aria-label="Build">build</button>
+        <button id="t-action" aria-label="Action"></button>
+      </div>
+    </div>
+    <div id="modal"></div>
+  </div>
+
+  <div id="title"></div>
+  <div id="loading"><div class="lbox"><p>Tiny Acres</p><div class="track"><div id="loadbar"></div></div></div></div>
+
+  <script src="src/data.js"></script>
+  <script src="src/util.js"></script>
+  <script src="src/assets.js"></script>
+  <script src="src/world.js"></script>
+  <script src="src/entities.js"></script>
+  <script src="src/game.js"></script>
+  <script src="src/render.js"></script>
+  <script src="src/ui.js"></script>
+  <script src="src/main.js"></script>
+</body>
+</html>
